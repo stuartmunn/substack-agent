@@ -13,16 +13,18 @@ always uses `send=False`, so no email is ever sent to subscribers.
 4. Run checks: `ruff check . && ruff format --check . && pytest`
 
 ## Environment variables
-Secrets may be supplied as `<NAME>_FILE` (path to a file, e.g. a Docker
-secret) instead of directly. Never commit `.env` or `secrets/`.
+Any variable can be supplied as `<NAME>_FILE` (path to a file, e.g. a Docker
+secret) instead; if both are set the file wins. Never commit `.env` or
+`secrets/`. If a required value is missing the app exits non-zero and names
+the missing variables (never their values).
 
-| Variable | Purpose |
-|---|---|
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token (secret) |
-| `TELEGRAM_CHAT_ID` | The only chat allowed to approve, redo or bin |
-| `ANTHROPIC_API_KEY` | Anthropic API key (secret) |
-| `CLAUDE_MODEL` | Anthropic model used to write posts |
-| `SUBSTACK_EMAIL` | Substack account email |
-| `SUBSTACK_PASSWORD` | Substack account password (secret) |
-| `SUBSTACK_PUBLICATION_URL` | Publication to post to |
-| `DATA_DIR` | Data volume holding SQLite and `seed.md` (default `/data`) |
+| Variable | Required | Purpose |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | yes | Telegram bot token (secret) |
+| `TELEGRAM_CHAT_ID` | yes | The only chat allowed to approve, redo or bin (integer) |
+| `ANTHROPIC_API_KEY` | yes | Anthropic API key (secret) |
+| `CLAUDE_MODEL` | yes | Anthropic model used to write posts |
+| `SUBSTACK_PUBLICATION_URL` | yes | Publication to post to |
+| `SUBSTACK_COOKIE` | yes | Substack session cookie (secret) |
+| `RUN_TIME` | no | Daily run time, `HH:MM` (default `08:30`) |
+| `TZ` | no | IANA time zone (default `Europe/London`) |
