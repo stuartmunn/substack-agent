@@ -38,6 +38,7 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [SEC-06] Only the configured Telegram chat can approve, redo or bin.
 - [SEC-07] Generated content is obvious satire: no real named people or companies, nothing defamatory, no foul language, English.
 - [SEC-08] Dependencies are pinned in `pyproject.toml`.
+- [SEC-09] Entrypoints catch unhandled exceptions and log them through the redacting logger; no raw traceback reaches stderr, because library errors can contain secrets.
 
 ## Error handling and alerting
 - [ERR-01] Every failure path calls `alert()`; nothing fails silently.

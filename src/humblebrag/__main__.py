@@ -3,12 +3,16 @@
 import asyncio
 import logging
 import signal
+import sys
 
+from humblebrag.bot import run_bot
 from humblebrag.config import Config, load_config_or_exit
 from humblebrag.heartbeat import heartbeat_loop
 from humblebrag.logging_setup import configure_logging, register_secrets
 
 logger = logging.getLogger(__name__)
+
+EXIT_CRASHED = 1
 
 
 def _secret_values(config: Config) -> list[str]:
@@ -20,16 +24,27 @@ def _secret_values(config: Config) -> list[str]:
     ]
 
 
-async def run_until_signalled() -> None:
-    """Run the heartbeat loop until SIGTERM or SIGINT, then stop cleanly."""
+def _request_stop(tasks: list[asyncio.Task[None]]) -> None:
+    """Cancel every task after a shutdown signal."""
+    logger.info("Shutdown signal received; stopping")
+    for task in tasks:
+        task.cancel()
+
+
+async def run_until_signalled(config: Config) -> None:
+    """Run the heartbeat and bot until SIGTERM or SIGINT, then stop cleanly.
+
+    Both run on this one event loop, so if the loop hangs the heartbeat stops.
+    If either task fails, the other is cancelled and the error propagates.
+    """
     loop = asyncio.get_running_loop()
-    task = asyncio.create_task(heartbeat_loop())
-    for stop_signal in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(stop_signal, task.cancel)
-    try:
-        await task
-    except asyncio.CancelledError:
-        logger.info("Shutdown signal received; stopping")
+    async with asyncio.TaskGroup() as group:
+        tasks = [
+            group.create_task(heartbeat_loop()),
+            group.create_task(run_bot(config)),
+        ]
+        for stop_signal in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(stop_signal, _request_stop, tasks)
 
 
 def main() -> None:
@@ -38,7 +53,11 @@ def main() -> None:
     config = load_config_or_exit()
     register_secrets(_secret_values(config))
     logger.info("Configuration loaded; model=%s", config.claude_model)
-    asyncio.run(run_until_signalled())
+    try:
+        asyncio.run(run_until_signalled(config))
+    except Exception:
+        logger.exception("Agent stopped with an unhandled error")
+        sys.exit(EXIT_CRASHED)
 
 
 if __name__ == "__main__":

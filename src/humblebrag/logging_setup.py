@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 REDACTED = "[REDACTED]"
 HANDLER_MARKER = "_humblebrag_handler"
+NOISY_LOGGERS = ("httpx", "httpcore")
 
 
 class SecretRedactor:
@@ -51,7 +52,11 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(level: int = logging.INFO) -> None:
-    """Send JSON logs to stdout, replacing any handler this function added."""
+    """Send JSON logs to stdout, replacing any handler this function added.
+
+    HTTP client loggers are held at WARNING: at INFO they log request URLs,
+    and Telegram URLs contain the bot token.
+    """
     root = logging.getLogger()
     for handler in list(root.handlers):
         if getattr(handler, HANDLER_MARKER, False):
@@ -61,6 +66,8 @@ def configure_logging(level: int = logging.INFO) -> None:
     setattr(handler, HANDLER_MARKER, True)
     root.addHandler(handler)
     root.setLevel(level)
+    for name in NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def register_secrets(values: list[str]) -> None:
