@@ -21,6 +21,7 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [PY-05] No mutable default arguments.
 - [PY-06] Code is Python 3.12 compatible and passes `ruff check .` and `ruff format --check .`.
 - [PY-07] Caller-supplied indexes and handles are bounds-checked and raise the documented error type, not `IndexError` (from PR #10, 2026-11-17)
+- [PY-08] Parsers treat trailing metadata that contradicts the format (e.g. on the wrong state) as plain text, never silently dropping it (from PR #10, 2026-11-17)
 
 ## Testing
 - [TST-01] Every acceptance criterion has at least one test that would fail without it.

@@ -6,6 +6,10 @@ Format (one seed per line; every other line is preserved untouched):
     - [x] <text> (used YYYY-MM-DD)            used
     - [ ] <text> (generated)                  invented by the agent, unused
     - [x] <text> (generated) (used YYYY-MM-DD)
+
+Trailing `(generated)` and, on checked lines only, `(used YYYY-MM-DD)` are
+metadata. A trailing `(used ...)` on an unchecked line contradicts the format,
+so it is kept as part of the seed's text.
 """
 
 import logging
@@ -47,10 +51,11 @@ def parse_seed_line(line: str, line_index: int = 0) -> Seed | None:
     if match is None:
         return None
     rest = match.group("rest").rstrip()
+    checked = match.group("mark") != " "
     used_date: date | None = None
     generated = False
     while True:
-        used_match = _USED_SUFFIX.search(rest)
+        used_match = _USED_SUFFIX.search(rest) if checked else None
         if used_match and used_date is None:
             try:
                 used_date = date.fromisoformat(used_match.group("date"))
@@ -67,7 +72,7 @@ def parse_seed_line(line: str, line_index: int = 0) -> Seed | None:
     text = rest.strip()
     if not text:
         return None
-    return Seed(line_index, text, match.group("mark") != " ", used_date, generated)
+    return Seed(line_index, text, checked, used_date, generated)
 
 
 def format_seed_line(text: str, used_on: date | None, generated: bool) -> str:

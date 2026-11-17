@@ -307,3 +307,18 @@ def test_seed_from_a_longer_file_is_stale_not_an_index_error(
     short_file = SeedFile.load(_write(tmp_path / "b.md", "- [ ] near\n"))
     with pytest.raises(ValueError, match="stale"):
         short_file.mark_used(long_file.unused[0], TODAY)
+
+
+def test_used_marker_on_an_unchecked_line_is_kept_as_text(tmp_path: Path) -> None:
+    """A trailing (used ...) only counts as metadata on a checked line, so an
+    unchecked seed that happens to end that way keeps its text."""
+    parsed = parse_seed_line("- [ ] Retrospective (used 2024-01-01)")
+    assert parsed == Seed(0, "Retrospective (used 2024-01-01)", False, None, False)
+    path = _write(tmp_path / "seed.md", "- [ ] Retrospective (used 2024-01-01)\n")
+    seed_file = SeedFile.load(path)
+    seed_file.mark_used(seed_file.unused[0], TODAY)
+    assert seed_file.text == (
+        "- [x] Retrospective (used 2024-01-01) (used 2026-11-17)\n"
+    )
+    assert seed_file.seeds[0].text == "Retrospective (used 2024-01-01)"
+    assert seed_file.seeds[0].used_date == TODAY
