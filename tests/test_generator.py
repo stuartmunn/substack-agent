@@ -170,13 +170,17 @@ async def test_range_is_configurable_and_stated_in_the_prompt() -> None:
         await generator.generate(SEED)
 
 
-async def test_body_with_an_image_is_rejected() -> None:
-    """AC5: no cover images, so image markdown is malformed."""
-    with_image = _reply(body_markdown=_body(300) + " ![cover](http://x/y.png)")
+@pytest.mark.parametrize(
+    "image",
+    ["![cover](http://x/y.png)", "![cover][ref]", '<IMG src="http://x/y.png">'],
+)
+async def test_body_with_an_image_is_rejected(image: str) -> None:
+    """AC5: no cover images, so any image syntax is malformed."""
+    with_image = _reply(body_markdown=_body(300) + " " + image)
     client = StubClient([with_image, _reply()])
     post = await _generator(client).generate(SEED)
     assert "image" in client.calls[1]["prompt"]
-    assert "![" not in post.body_markdown
+    assert post.body_markdown == _body(300)
 
 
 async def test_extra_keys_are_dropped_so_only_a_post_comes_out() -> None:

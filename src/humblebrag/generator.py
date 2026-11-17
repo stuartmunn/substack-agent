@@ -15,7 +15,7 @@ MAX_ATTEMPTS = 2
 GENERATION_MAX_TOKENS = 4096
 REQUIRED_FIELDS = ("title", "subtitle", "body_markdown")
 _FENCE = re.compile(r"\A```(?:json)?\s*(?P<inner>.*?)\s*```\Z", re.DOTALL)
-_MARKDOWN_IMAGE = re.compile(r"!\[[^\]]*\]\(")
+_IMAGE = re.compile(r"!\[[^\]]*\](?:\(|\[)|<img\b", re.IGNORECASE)
 
 
 class PostGenerationError(Exception):
@@ -59,8 +59,9 @@ def _build_prompt(
 
 def _parse_post(reply: str, min_words: int, max_words: int) -> GeneratedPost:
     """Validate the model's reply as a post, or raise MalformedPostError."""
-    fenced = _FENCE.match(reply.strip())
-    text = fenced["inner"] if fenced else reply
+    stripped = reply.strip()
+    fenced = _FENCE.match(stripped)
+    text = fenced["inner"] if fenced else stripped
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
@@ -74,7 +75,7 @@ def _parse_post(reply: str, min_words: int, max_words: int) -> GeneratedPost:
             raise MalformedPostError(f"{name} is missing or not a non-empty string")
         values[name] = value.strip()
     body = values["body_markdown"]
-    if _MARKDOWN_IMAGE.search(body):
+    if _IMAGE.search(body):
         raise MalformedPostError("body_markdown contains an image")
     word_count = len(body.split())
     if not min_words <= word_count <= max_words:
