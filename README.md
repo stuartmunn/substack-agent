@@ -26,6 +26,12 @@ The bot uses long polling (no inbound port) and answers only the chat in
 `TELEGRAM_CHAT_ID`. Messages and button presses from any other chat are
 ignored and logged. `/start` and `/help` list the commands.
 
+## Alerts
+Every component reports failures through `humblebrag.alerts.alert(event, detail)`.
+It sends a plain-text Telegram message starting with ⚠️ and the failed step,
+with secrets redacted and the text capped at Telegram's limit. It never
+raises: if Telegram is unreachable, the alert is logged at ERROR instead.
+
 ## Logs and health
 Logs are one JSON object per line on stdout (`timestamp`, `level`, `logger`,
 `event`); registered secret values are redacted. The agent touches

@@ -13,6 +13,7 @@ from telegram.ext import (
     TypeHandler,
 )
 
+from humblebrag.alerts import configure_alerts, telegram_sender
 from humblebrag.config import Config
 
 logger = logging.getLogger(__name__)
@@ -92,9 +93,11 @@ async def run_bot(config: Config) -> None:
         try:
             await application.start()
             await application.updater.start_polling(timeout=POLL_TIMEOUT_SECONDS)
+            configure_alerts(telegram_sender(application.bot, config.telegram_chat_id))
             logger.info("Telegram bot polling")
             await asyncio.Event().wait()
         finally:
+            configure_alerts(None)
             if application.updater.running:
                 await application.updater.stop()
             if application.running:

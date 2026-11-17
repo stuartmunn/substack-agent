@@ -114,6 +114,22 @@ def _fake_application(
     return updater, app
 
 
+async def test_run_bot_registers_the_alert_sender_and_removes_it_on_stop(
+    monkeypatch: pytest.MonkeyPatch, config: Config
+) -> None:
+    """Components can alert while the bot runs; the sender is unset after."""
+    from humblebrag import alerts
+
+    _fake_application(monkeypatch)
+    task = asyncio.create_task(bot.run_bot(config))
+    await asyncio.sleep(0.05)
+    assert alerts._sender is not None
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert alerts._sender is None
+
+
 async def test_run_bot_cleans_up_when_polling_fails_to_start(
     monkeypatch: pytest.MonkeyPatch, config: Config
 ) -> None:

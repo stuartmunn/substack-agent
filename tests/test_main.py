@@ -99,10 +99,21 @@ def test_unhandled_error_is_logged_redacted_and_exits_non_zero(
     async def crash(_config: Config) -> None:
         raise RuntimeError("token tok-SECRET was rejected")
 
+    alerts: list[tuple[str, str]] = []
+
+    async def fake_alert(_config: Config, event: str, detail: str) -> bool:
+        alerts.append((event, redactor.redact(detail)))
+        return True
+
     monkeypatch.setattr(entrypoint, "run_until_signalled", crash)
+    monkeypatch.setattr(entrypoint, "send_standalone_alert", fake_alert)
     with pytest.raises(SystemExit) as exit_info:
         entrypoint.main()
     captured = capsys.readouterr()
+    assert len(alerts) == 1
+    assert alerts[0][0] == "agent"
+    assert "RuntimeError" in alerts[0][1]
+    assert "SECRET" not in alerts[0][1]
     assert exit_info.value.code != 0
     assert "SECRET" not in captured.out + captured.err
     assert "unhandled error" in captured.out

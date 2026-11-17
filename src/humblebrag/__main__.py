@@ -5,6 +5,7 @@ import logging
 import signal
 import sys
 
+from humblebrag.alerts import send_standalone_alert
 from humblebrag.bot import run_bot
 from humblebrag.config import Config, load_config_or_exit
 from humblebrag.heartbeat import heartbeat_loop
@@ -55,8 +56,10 @@ def main() -> None:
     logger.info("Configuration loaded; model=%s", config.claude_model)
     try:
         asyncio.run(run_until_signalled(config))
-    except Exception:
+    except Exception as error:
         logger.exception("Agent stopped with an unhandled error")
+        detail = f"agent crashed with {type(error).__name__}: {error}"
+        asyncio.run(send_standalone_alert(config, "agent", detail))
         sys.exit(EXIT_CRASHED)
 
 
