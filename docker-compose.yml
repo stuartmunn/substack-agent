@@ -8,6 +8,8 @@ services:
       SUBSTACK_PUBLICATION_URL: ${SUBSTACK_PUBLICATION_URL:?set SUBSTACK_PUBLICATION_URL in .env}
       RUN_TIME: ${RUN_TIME:-08:30}
       TZ: ${TZ:-Europe/London}
+      POST_MIN_WORDS: ${POST_MIN_WORDS:-250}
+      POST_MAX_WORDS: ${POST_MAX_WORDS:-600}
       TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
       ANTHROPIC_API_KEY_FILE: /run/secrets/anthropic_api_key
       SUBSTACK_COOKIE_FILE: /run/secrets/substack_cookie
