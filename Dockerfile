@@ -7,6 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY prompts ./prompts
 RUN pip install .
 
 RUN useradd --system --uid 10001 --no-create-home humblebrag \
