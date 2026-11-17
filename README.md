@@ -21,6 +21,11 @@ always uses `send=False`, so no email is ever sent to subscribers.
    exposes no ports, restarts unless stopped, and keeps state in the
    `humblebrag-data` volume mounted at `/data`.
 
+## Telegram bot
+The bot uses long polling (no inbound port) and answers only the chat in
+`TELEGRAM_CHAT_ID`. Messages and button presses from any other chat are
+ignored and logged. `/start` and `/help` list the commands.
+
 ## Logs and health
 Logs are one JSON object per line on stdout (`timestamp`, `level`, `logger`,
 `event`); registered secret values are redacted. The agent touches

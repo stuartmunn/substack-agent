@@ -89,3 +89,12 @@ def test_configure_logging_twice_does_not_duplicate_lines(
     configure_logging()
     logging.getLogger("humblebrag.test").info("once")
     assert len(capsys.readouterr().out.strip().splitlines()) == 1
+
+
+def test_http_client_info_logs_are_suppressed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Telegram request URLs contain the bot token, so httpx INFO is silenced."""
+    configure_logging()
+    logging.getLogger("httpx").info("POST https://api.telegram.org/bot123:abc/getMe")
+    assert capsys.readouterr().out == ""

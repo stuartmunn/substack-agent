@@ -3,16 +3,18 @@ name = "humblebrag"
 version = "0.0.0"
 description = "Sir Humblebrag III: a daily parody Substack post agent"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = ["python-telegram-bot==22.8"]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff", "pyyaml==6.0.2"]
+dev = ["pytest", "ruff", "pyyaml==6.0.2", "pytest-asyncio==1.5.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 88
