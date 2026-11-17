@@ -26,6 +26,17 @@ The bot uses long polling (no inbound port) and answers only the chat in
 `TELEGRAM_CHAT_ID`. Messages and button presses from any other chat are
 ignored and logged. `/start` and `/help` list the commands.
 
+## Seeds (`/data/seed.md`)
+A plain checklist you can edit by hand. One seed per line:
+
+    - [ ] An unused seed
+    - [x] A used seed (used 2026-11-17)
+    - [ ] A seed the agent invented (generated)
+
+Any other line (blank lines, `# comments`, notes) is left exactly as you
+wrote it. The agent only rewrites the line it is marking used, and writes the
+file atomically (temp file, then rename). A missing file is created empty.
+
 ## Alerts
 Every component reports failures through `humblebrag.alerts.alert(event, detail)`.
 It sends a plain-text Telegram message starting with ⚠️ and the failed step,
