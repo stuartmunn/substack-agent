@@ -12,6 +12,11 @@ from humblebrag import __main__ as entrypoint
 from humblebrag.config import Config, load_config
 from humblebrag.logging_setup import redactor
 
+
+class InvalidTokenError(Exception):
+    """Stand-in for a library error that carries the failure reason."""
+
+
 VALUES = {
     "TELEGRAM_BOT_TOKEN": "tok-SECRET",
     "TELEGRAM_CHAT_ID": "1",
@@ -99,10 +104,87 @@ def test_unhandled_error_is_logged_redacted_and_exits_non_zero(
     async def crash(_config: Config) -> None:
         raise RuntimeError("token tok-SECRET was rejected")
 
+    alerts: list[tuple[str, str]] = []
+
+    async def fake_alert(_config: Config, event: str, detail: str) -> bool:
+        alerts.append((event, redactor.redact(detail)))
+        return True
+
     monkeypatch.setattr(entrypoint, "run_until_signalled", crash)
+    monkeypatch.setattr(entrypoint, "send_standalone_alert", fake_alert)
+    with pytest.raises(SystemExit) as exit_info:
+        entrypoint.main()
+    captured = capsys.readouterr()
+    assert len(alerts) == 1
+    assert alerts[0][0] == "agent"
+    assert "RuntimeError" in alerts[0][1]
+    assert "SECRET" not in alerts[0][1]
+    assert exit_info.value.code != 0
+    assert "SECRET" not in captured.out + captured.err
+    assert "unhandled error" in captured.out
+
+
+def test_crash_exits_non_zero_even_if_the_alert_machinery_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """If sending the crash alert itself raises, main still exits non-zero
+    and logs the failure instead of printing a raw traceback."""
+    for name, value in VALUES.items():
+        monkeypatch.setenv(name, value)
+
+    async def crash(_config: Config) -> None:
+        raise RuntimeError("boom")
+
+    async def broken_alert(_config: Config, _event: str, _detail: str) -> bool:
+        raise OSError("alert machinery failed")
+
+    monkeypatch.setattr(entrypoint, "run_until_signalled", crash)
+    monkeypatch.setattr(entrypoint, "send_standalone_alert", broken_alert)
     with pytest.raises(SystemExit) as exit_info:
         entrypoint.main()
     captured = capsys.readouterr()
     assert exit_info.value.code != 0
-    assert "SECRET" not in captured.out + captured.err
-    assert "unhandled error" in captured.out
+    assert "Failed to send crash alert" in captured.out
+    assert "Traceback" not in captured.err
+
+
+def test_describe_error_unwraps_exception_groups_to_the_real_causes() -> None:
+    """A TaskGroup failure is described by its leaf errors, not the wrapper."""
+    group = ExceptionGroup(
+        "unhandled errors in a TaskGroup",
+        [
+            InvalidTokenError("token was rejected"),
+            ExceptionGroup("nested", [OSError("disk full")]),
+        ],
+    )
+    text = entrypoint.describe_error(group)
+    assert "InvalidTokenError: token was rejected" in text
+    assert "OSError: disk full" in text
+    assert "ExceptionGroup" not in text
+    assert entrypoint.describe_error(RuntimeError("x")) == "RuntimeError: x"
+
+
+def test_real_task_group_failure_alerts_with_the_underlying_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End to end: a failing bot task makes the crash alert name its error."""
+    for name, value in VALUES.items():
+        monkeypatch.setenv(name, value)
+    details: list[str] = []
+
+    async def failing_bot(_config: Config) -> None:
+        raise InvalidTokenError("token was rejected")
+
+    async def idle_heartbeat() -> None:
+        await asyncio.sleep(3600)
+
+    async def capture_alert(_config: Config, _event: str, detail: str) -> bool:
+        details.append(detail)
+        return True
+
+    monkeypatch.setattr(entrypoint, "run_bot", failing_bot)
+    monkeypatch.setattr(entrypoint, "heartbeat_loop", idle_heartbeat)
+    monkeypatch.setattr(entrypoint, "send_standalone_alert", capture_alert)
+    with pytest.raises(SystemExit):
+        entrypoint.main()
+    assert details == ["agent crashed with InvalidTokenError: token was rejected"]

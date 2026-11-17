@@ -61,3 +61,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [LOG-01] Every process entrypoint (including helper commands like healthchecks) calls `configure_logging()` first, so all output is JSON on stdout (from PR #7, 2026-11-17)
 - [ERR-07] Long-running loops catch and log recoverable per-iteration errors instead of letting them kill the process (from PR #7, 2026-11-17)
 - [ERR-08] Startup and cleanup of long-lived resources share one `try`/`finally`, and cleanup only stops what actually started (from PR #8, 2026-11-17)
+- [ERR-09] Error text sent to logs or alerts unwraps `ExceptionGroup`s to the leaf exceptions, so the real cause is named (from PR #9, 2026-11-17)
