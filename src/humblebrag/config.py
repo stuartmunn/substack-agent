@@ -45,7 +45,7 @@ def _read_value(env: Mapping[str, str], name: str) -> str | None:
     if path_text:
         try:
             value = Path(path_text).read_text(encoding="utf-8").strip()
-        except OSError as error:
+        except (OSError, UnicodeDecodeError) as error:
             raise ConfigError(
                 f"{file_var} points to a file that cannot be read "
                 f"({type(error).__name__})"

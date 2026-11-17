@@ -66,6 +66,15 @@ def test_unreadable_file_is_a_config_error(tmp_path: Path) -> None:
         load_config(env)
 
 
+def test_undecodable_file_is_a_config_error(tmp_path: Path) -> None:
+    """AC2/AC3: a non-UTF-8 secret file is a clean ConfigError."""
+    bad_file = tmp_path / "token"
+    bad_file.write_bytes(b"\xff\xfe\x00bad")
+    env = {**BASE_ENV, "TELEGRAM_BOT_TOKEN_FILE": str(bad_file)}
+    with pytest.raises(ConfigError, match="TELEGRAM_BOT_TOKEN_FILE"):
+        load_config(env)
+
+
 @pytest.mark.parametrize("name", sorted(BASE_ENV))
 def test_missing_required_value_exits_non_zero_without_secrets(
     name: str, caplog: pytest.LogCaptureFixture

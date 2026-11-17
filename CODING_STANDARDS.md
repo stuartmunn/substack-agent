@@ -55,3 +55,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 
 ## Learned from PR-Agent
 <!-- Format: - [ID] rule (from PR #n, YYYY-MM-DD) -->
+- [ERR-06] File reads that can fail catch decoding errors as well as `OSError` and turn them into a clear, secret-free error (from PR #5, 2026-11-17)
