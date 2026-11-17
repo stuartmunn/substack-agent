@@ -86,14 +86,7 @@ async def test_run_bot_uses_polling_not_webhook(
     monkeypatch: pytest.MonkeyPatch, config: Config
 ) -> None:
     """AC1: run_bot starts polling and never sets a webhook."""
-    updater = SimpleNamespace(start_polling=AsyncMock(), stop=AsyncMock())
-    app = MagicMock()
-    app.updater = updater
-    app.start = AsyncMock()
-    app.stop = AsyncMock()
-    app.__aenter__ = AsyncMock(return_value=app)
-    app.__aexit__ = AsyncMock(return_value=None)
-    monkeypatch.setattr(bot, "build_application", lambda _config: app)
+    updater, app = _fake_application(monkeypatch)
 
     task = asyncio.create_task(bot.run_bot(config))
     await asyncio.sleep(0.05)
@@ -103,6 +96,58 @@ async def test_run_bot_uses_polling_not_webhook(
     updater.start_polling.assert_awaited_once()
     updater.stop.assert_awaited_once()
     app.bot.set_webhook.assert_not_called()
+
+
+def _fake_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[SimpleNamespace, MagicMock]:
+    """Patch build_application to return a fake app with a fake updater."""
+    updater = SimpleNamespace(start_polling=AsyncMock(), stop=AsyncMock(), running=True)
+    app = MagicMock()
+    app.updater = updater
+    app.running = True
+    app.start = AsyncMock()
+    app.stop = AsyncMock()
+    app.__aenter__ = AsyncMock(return_value=app)
+    app.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr(bot, "build_application", lambda _config: app)
+    return updater, app
+
+
+async def test_run_bot_cleans_up_when_polling_fails_to_start(
+    monkeypatch: pytest.MonkeyPatch, config: Config
+) -> None:
+    """If start_polling raises, what was started is stopped and the error
+    propagates (so the process exits and Docker restarts it)."""
+    updater, app = _fake_application(monkeypatch)
+    updater.start_polling.side_effect = RuntimeError("network down")
+    with pytest.raises(RuntimeError, match="network down"):
+        await bot.run_bot(config)
+    updater.stop.assert_awaited_once()
+    app.stop.assert_awaited_once()
+
+
+async def test_run_bot_stops_nothing_that_never_started(
+    monkeypatch: pytest.MonkeyPatch, config: Config
+) -> None:
+    """If the application fails to start, no stop calls are made on it."""
+    updater, app = _fake_application(monkeypatch)
+    updater.running = False
+    app.running = False
+    app.start.side_effect = RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"):
+        await bot.run_bot(config)
+    updater.stop.assert_not_awaited()
+    app.stop.assert_not_awaited()
+
+
+def test_long_poll_read_timeout_exceeds_poll_window(config: Config) -> None:
+    """ERR-02: the get_updates client is explicitly configured, and PTB adds
+    the poll timeout to its read timeout, so reads outlast the long poll."""
+    get_updates_client = bot.build_application(config).bot._request[0]
+    assert get_updates_client._client.timeout.read == (
+        bot.GET_UPDATES_READ_TIMEOUT_SECONDS
+    )
 
 
 def test_every_external_call_has_a_timeout(config: Config) -> None:

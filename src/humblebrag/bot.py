@@ -23,6 +23,12 @@ READ_TIMEOUT_SECONDS = 20.0
 WRITE_TIMEOUT_SECONDS = 20.0
 POOL_TIMEOUT_SECONDS = 10.0
 POLL_TIMEOUT_SECONDS = 30
+# PTB adds the poll timeout to the get_updates read timeout, so the effective
+# read timeout is POLL_TIMEOUT_SECONDS + GET_UPDATES_READ_TIMEOUT_SECONDS.
+GET_UPDATES_READ_TIMEOUT_SECONDS = 10.0
+GET_UPDATES_CONNECT_TIMEOUT_SECONDS = 10.0
+GET_UPDATES_WRITE_TIMEOUT_SECONDS = 20.0
+GET_UPDATES_POOL_TIMEOUT_SECONDS = 10.0
 COMMANDS: dict[str, str] = {
     "start": "Show the list of commands",
     "help": "Show the list of commands",
@@ -67,6 +73,10 @@ def build_application(config: Config) -> Application:
         .read_timeout(READ_TIMEOUT_SECONDS)
         .write_timeout(WRITE_TIMEOUT_SECONDS)
         .pool_timeout(POOL_TIMEOUT_SECONDS)
+        .get_updates_connect_timeout(GET_UPDATES_CONNECT_TIMEOUT_SECONDS)
+        .get_updates_read_timeout(GET_UPDATES_READ_TIMEOUT_SECONDS)
+        .get_updates_write_timeout(GET_UPDATES_WRITE_TIMEOUT_SECONDS)
+        .get_updates_pool_timeout(GET_UPDATES_POOL_TIMEOUT_SECONDS)
         .build()
     )
     application.bot_data[ALLOWED_CHAT_KEY] = config.telegram_chat_id
@@ -79,11 +89,13 @@ async def run_bot(config: Config) -> None:
     """Run the bot with long polling (no inbound port) until cancelled."""
     application = build_application(config)
     async with application:
-        await application.start()
-        await application.updater.start_polling(timeout=POLL_TIMEOUT_SECONDS)
-        logger.info("Telegram bot polling")
         try:
+            await application.start()
+            await application.updater.start_polling(timeout=POLL_TIMEOUT_SECONDS)
+            logger.info("Telegram bot polling")
             await asyncio.Event().wait()
         finally:
-            await application.updater.stop()
-            await application.stop()
+            if application.updater.running:
+                await application.updater.stop()
+            if application.running:
+                await application.stop()
