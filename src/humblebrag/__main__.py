@@ -59,7 +59,10 @@ def main() -> None:
     except Exception as error:
         logger.exception("Agent stopped with an unhandled error")
         detail = f"agent crashed with {type(error).__name__}: {error}"
-        asyncio.run(send_standalone_alert(config, "agent", detail))
+        try:
+            asyncio.run(send_standalone_alert(config, "agent", detail))
+        except Exception:
+            logger.exception("Failed to send crash alert")
         sys.exit(EXIT_CRASHED)
 
 

@@ -117,3 +117,27 @@ def test_unhandled_error_is_logged_redacted_and_exits_non_zero(
     assert exit_info.value.code != 0
     assert "SECRET" not in captured.out + captured.err
     assert "unhandled error" in captured.out
+
+
+def test_crash_exits_non_zero_even_if_the_alert_machinery_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """If sending the crash alert itself raises, main still exits non-zero
+    and logs the failure instead of printing a raw traceback."""
+    for name, value in VALUES.items():
+        monkeypatch.setenv(name, value)
+
+    async def crash(_config: Config) -> None:
+        raise RuntimeError("boom")
+
+    async def broken_alert(_config: Config, _event: str, _detail: str) -> bool:
+        raise OSError("alert machinery failed")
+
+    monkeypatch.setattr(entrypoint, "run_until_signalled", crash)
+    monkeypatch.setattr(entrypoint, "send_standalone_alert", broken_alert)
+    with pytest.raises(SystemExit) as exit_info:
+        entrypoint.main()
+    captured = capsys.readouterr()
+    assert exit_info.value.code != 0
+    assert "Failed to send crash alert" in captured.out
+    assert "Traceback" not in captured.err
