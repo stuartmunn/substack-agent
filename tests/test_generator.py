@@ -207,7 +207,7 @@ def test_module_offers_posts_only() -> None:
     "link",
     [
         "[here](http://x.com)",
-        "[here][ref]",
+        "[here][ref]\n\n[ref]: example.com",
         "see https://x.com now",
         "see www.x.com now",
         '<a href="http://x.com">here</a>',
@@ -233,3 +233,11 @@ async def test_token_budget_has_a_floor_and_grows_with_the_word_range() -> None:
     assert large.calls[0]["max_tokens"] == (
         5000 * TOKENS_PER_WORD_ALLOWANCE + JSON_OVERHEAD_TOKENS
     )
+
+
+async def test_bracketed_footnote_markers_are_not_links() -> None:
+    """Near-miss: "[1][2]" is not a link, so it must not trigger a retry."""
+    client = StubClient([_reply(body_markdown=_body(300) + " [1][2]")])
+    post = await _generator(client).generate(SEED)
+    assert len(client.calls) == 1
+    assert post.body_markdown.endswith("[1][2]")
