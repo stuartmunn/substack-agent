@@ -7,9 +7,12 @@ Binning only releases the reservation: the line never moves, so the seed is
 automatically the first unused line again.
 """
 
+import fcntl
 import json
 import logging
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
@@ -19,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 RESERVATIONS_FILENAME = "seed-reservations.json"
 JSON_INDENT = 2
+LOCK_SUFFIX = ".lock"
+LOCK_TIMEOUT_SECONDS = 5.0
+LOCK_POLL_SECONDS = 0.05
 
 
 class ReservationError(Exception):
@@ -31,6 +37,10 @@ class UnknownDraftError(ReservationError):
 
 class SeedNotFoundError(ReservationError):
     """The reserved seed's line is no longer in seed.md."""
+
+
+class ReservationBusyError(ReservationError):
+    """Another process held the reservations lock for too long."""
 
 
 class ReservationStateError(ReservationError):
@@ -50,6 +60,7 @@ class SeedQueue:
         self._seed_path = seed_path
         self._today = today
         self._state_path = state_path or seed_path.with_name(RESERVATIONS_FILENAME)
+        self._lock_path = self._state_path.with_suffix(LOCK_SUFFIX)
 
     def pick(self, draft_id: str) -> Seed | None:
         """Reserve and return the first unused, unreserved seed, or None.
@@ -57,6 +68,29 @@ class SeedQueue:
         Picking again for a draft that already holds a still-unused seed
         returns that same seed.
         """
+        with self._locked():
+            return self._pick_locked(draft_id)
+
+    def approve(self, draft_id: str) -> None:
+        """Mark the draft's seed used today and release its reservation."""
+        with self._locked():
+            self._approve_locked(draft_id)
+
+    def bin_draft(self, draft_id: str) -> bool:
+        """Release the draft's reservation; True if it held one.
+
+        The seed was never moved, so it is the first unused line again.
+        """
+        with self._locked():
+            reservations = self._load_reservations()
+            if draft_id not in reservations:
+                return False
+            del reservations[draft_id]
+            self._save_reservations(reservations)
+            return True
+
+    def _pick_locked(self, draft_id: str) -> Seed | None:
+        """The body of ``pick``; the caller holds the lock."""
         reservations = self._load_reservations()
         unused = SeedFile.load(self._seed_path).unused
         held = reservations.get(draft_id)
@@ -73,8 +107,13 @@ class SeedQueue:
                 return seed
         return None
 
-    def approve(self, draft_id: str) -> None:
-        """Mark the draft's seed used today and release its reservation."""
+    def _approve_locked(self, draft_id: str) -> None:
+        """The body of ``approve``; the caller holds the lock.
+
+        The seed file is written before the reservation is released, so a crash
+        in between leaves a harmless stale reservation: approving again finds
+        the seed already used and just clears it.
+        """
         reservations = self._load_reservations()
         text = self._reserved_text(reservations, draft_id)
         seed_file = SeedFile.load(self._seed_path)
@@ -89,17 +128,26 @@ class SeedQueue:
         del reservations[draft_id]
         self._save_reservations(reservations)
 
-    def bin_draft(self, draft_id: str) -> bool:
-        """Release the draft's reservation; True if it held one.
-
-        The seed was never moved, so it is the first unused line again.
-        """
-        reservations = self._load_reservations()
-        if draft_id not in reservations:
-            return False
-        del reservations[draft_id]
-        self._save_reservations(reservations)
-        return True
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        """Hold an exclusive file lock, waiting at most LOCK_TIMEOUT_SECONDS."""
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+        with self._lock_path.open("a") as lock_file:
+            while True:
+                try:
+                    fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise ReservationBusyError(
+                            f"{self._lock_path.name} is held by another process"
+                        ) from None
+                    time.sleep(LOCK_POLL_SECONDS)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file, fcntl.LOCK_UN)
 
     @staticmethod
     def _reserved_text(reservations: dict[str, str], draft_id: str) -> str:
