@@ -15,4 +15,6 @@ RUN useradd --system --uid 10001 --no-create-home humblebrag \
 USER humblebrag
 
 VOLUME /data
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=1 \
+    CMD ["python", "-m", "humblebrag.heartbeat"]
 CMD ["python", "-m", "humblebrag"]

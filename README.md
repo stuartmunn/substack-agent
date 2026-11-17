@@ -21,6 +21,13 @@ always uses `send=False`, so no email is ever sent to subscribers.
    exposes no ports, restarts unless stopped, and keeps state in the
    `humblebrag-data` volume mounted at `/data`.
 
+## Logs and health
+Logs are one JSON object per line on stdout (`timestamp`, `level`, `logger`,
+`event`); registered secret values are redacted. The agent touches
+`/tmp/humblebrag.heartbeat` every 30s from its event loop, and the Docker
+`HEALTHCHECK` fails if the file is missing or older than 60s, so a dead or
+hung loop is marked unhealthy within 2 minutes (`docker ps` shows status).
+
 ## Environment variables
 Any variable can be supplied as `<NAME>_FILE` (path to a file, e.g. a Docker
 secret) instead; if both are set the file wins. Never commit `.env` or
