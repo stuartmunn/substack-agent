@@ -1,0 +1,19 @@
+[project]
+name = "humblebrag"
+version = "0.0.0"
+description = "Sir Humblebrag III: a daily parody Substack post agent"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[tool.setuptools]
+packages = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"

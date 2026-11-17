@@ -44,6 +44,12 @@ Jira project: SA (stuartmunn.atlassian.net). One Jira story = one branch = one P
 4. Open the PR with `gh pr create` using `.github/pull_request_template.md`.
    Title: `SA-<n>: <story title>`.
 
+## Jira status
+Claude Code keeps the story's status current (use the Atlassian tools):
+- **In Progress** when you start the story (before creating the branch).
+- **In Review** when you raise the PR.
+- **Done** once the PR is merged.
+
 ## PR-Agent review loop
 PR-Agent is installed on the repo and reviews automatically when a PR is raised.
 1. After raising the PR, wait 3–5 minutes, then poll the PR comments
