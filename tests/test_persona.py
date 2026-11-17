@@ -107,3 +107,12 @@ def test_sample_follows_format(path: Path) -> None:
     assert ends_agree != ends_tags
     assert MIN_WORDS <= len(text.split()) <= MAX_WORDS
     assert "leadership" in text.lower()
+
+
+def test_load_persona_accepts_crlf_line_endings(tmp_path: Path) -> None:
+    """A persona file saved with Windows line endings still loads."""
+    path = tmp_path / "persona.md"
+    path.write_bytes(b"---\r\nversion: 2\r\n---\r\n# Title\r\nBody\r\n")
+    persona = load_persona(path)
+    assert persona.version == 2
+    assert persona.text == "# Title\nBody"

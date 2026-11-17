@@ -29,7 +29,7 @@ def load_persona(path: Path = DEFAULT_PERSONA_PATH) -> Persona:
         raw = path.read_text(encoding=ENCODING)
     except (OSError, UnicodeDecodeError) as error:
         raise PersonaError(f"Cannot read persona prompt at {path}") from error
-    match = _FRONT_MATTER.match(raw)
+    match = _FRONT_MATTER.match(raw.replace("\r\n", "\n"))
     version = _VERSION_LINE.search(match["meta"]) if match else None
     if match is None or version is None:
         raise PersonaError(f"Persona prompt at {path} has no version front matter")
