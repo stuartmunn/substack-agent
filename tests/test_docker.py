@@ -98,3 +98,10 @@ def test_compose_exposes_no_ports() -> None:
     service = _service()
     assert "ports" not in service
     assert "expose" not in service
+
+
+def test_compose_fails_fast_on_missing_required_variables() -> None:
+    """Required non-secret variables use ${VAR:?message}, so `up` fails fast."""
+    environment = _service()["environment"]
+    for name in ("TELEGRAM_CHAT_ID", "CLAUDE_MODEL", "SUBSTACK_PUBLICATION_URL"):
+        assert environment[name].startswith(f"${{{name}:?"), name
