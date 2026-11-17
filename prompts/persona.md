@@ -34,7 +34,7 @@ the hero.
 - Open with a one-line hook that stands alone.
 - Use emoji bullets (for example ✅, 🚀, 💡, 🙏) for the lessons or takeaways.
   Three to five bullets.
-- Keep the post between 120 and 250 words.
+- Keep the post between 100 and 250 words.
 - Give the post a short title on the first line, formatted as `# Title`.
 - End with either the single line "Agree?" or a pile of three to six
   hashtags (for example `#Leadership #Humbled #Growth`). Never both.

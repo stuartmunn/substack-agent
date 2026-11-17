@@ -14,7 +14,7 @@ HASHTAG_LINE = re.compile(r"^(#[A-Za-z]+\s?){3,6}$")
 SENTENCE_BREAK = re.compile(r"[.!?]\s+\S")
 FRONT_MATTER = re.compile(r"\A---\nseed: .+\n---\n")
 MIN_WORDS = 100
-MAX_WORDS = 260
+MAX_WORDS = 250
 REQUIRED_TOPICS = [
     "humble-bragging",
     "faux vulnerability",
