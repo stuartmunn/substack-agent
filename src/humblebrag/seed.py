@@ -82,6 +82,7 @@ def format_seed_line(text: str, used_on: date | None, generated: bool) -> str:
 
 def _write_atomically(path: Path, content: str) -> None:
     """Write ``content`` to ``path`` via a temp file in the same directory."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     mode = path.stat().st_mode & 0o777 if path.exists() else FILE_MODE
     handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     temp_path = Path(temp_name)
@@ -109,7 +110,6 @@ class SeedFile:
     def load(cls, path: Path = DEFAULT_SEED_PATH) -> "SeedFile":
         """Read the file, creating it empty (and its directory) if missing."""
         if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
             _write_atomically(path, "")
             logger.info("Created empty seed file at %s", path)
         try:
@@ -136,7 +136,12 @@ class SeedFile:
 
     def mark_used(self, seed: Seed, on: date) -> None:
         """Rewrite only ``seed``'s line as used on ``on``."""
-        current = parse_seed_line(self._lines[seed.line_index], seed.line_index)
+        in_range = 0 <= seed.line_index < len(self._lines)
+        current = (
+            parse_seed_line(self._lines[seed.line_index], seed.line_index)
+            if in_range
+            else None
+        )
         if current != seed:
             raise ValueError("Seed is stale: its line has changed since it was read")
         if seed.used:

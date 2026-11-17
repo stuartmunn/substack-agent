@@ -286,3 +286,24 @@ def test_new_file_is_world_readable_not_private(tmp_path: Path) -> None:
     path = tmp_path / "seed.md"
     SeedFile.load(path)
     assert stat.S_IMODE(path.stat().st_mode) == seed_module.FILE_MODE
+
+
+def test_save_recreates_a_missing_directory(tmp_path: Path) -> None:
+    """save() works even if the data directory was removed after load()."""
+    path = tmp_path / "data" / "seed.md"
+    seed_file = SeedFile.load(path)
+    path.unlink()
+    path.parent.rmdir()
+    seed_file.append_seed("after the directory vanished")
+    seed_file.save()
+    assert path.read_text() == "- [ ] after the directory vanished\n"
+
+
+def test_seed_from_a_longer_file_is_stale_not_an_index_error(
+    tmp_path: Path,
+) -> None:
+    """A seed whose line number is beyond this file raises ValueError."""
+    long_file = SeedFile.load(_write(tmp_path / "a.md", "\n\n\n- [ ] far away\n"))
+    short_file = SeedFile.load(_write(tmp_path / "b.md", "- [ ] near\n"))
+    with pytest.raises(ValueError, match="stale"):
+        short_file.mark_used(long_file.unused[0], TODAY)
