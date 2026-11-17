@@ -12,6 +12,15 @@ always uses `send=False`, so no email is ever sent to subscribers.
 3. Copy the env template and fill it in: `cp .env.example .env`
 4. Run checks: `ruff check . && ruff format --check . && pytest`
 
+## Run with Docker
+1. Put each secret in its own file under `secrets/` (git-ignored):
+   `telegram_bot_token`, `anthropic_api_key`, `substack_cookie`.
+2. Put the non-secret values (`TELEGRAM_CHAT_ID`, `CLAUDE_MODEL`,
+   `SUBSTACK_PUBLICATION_URL`, optionally `RUN_TIME`, `TZ`) in `.env`.
+3. `docker compose up -d --build`. The container runs as a non-root user,
+   exposes no ports, restarts unless stopped, and keeps state in the
+   `humblebrag-data` volume mounted at `/data`.
+
 ## Environment variables
 Any variable can be supplied as `<NAME>_FILE` (path to a file, e.g. a Docker
 secret) instead; if both are set the file wins. Never commit `.env` or
