@@ -37,6 +37,12 @@ Any other line (blank lines, `# comments`, notes) is left exactly as you
 wrote it. The agent only rewrites the line it is marking used, and writes the
 file atomically (temp file, then rename). A missing file is created empty.
 
+Seeds are used oldest-first. When a draft is made, its seed is *reserved* in
+`/data/seed-reservations.json` (so a restart cannot hand it out twice) but
+`seed.md` is left alone. Approving the draft ticks the seed with today's date.
+Binning the draft just releases the reservation, so the seed is the first
+unused line again. Seeds are identified by their text, so avoid duplicate lines.
+
 ## Alerts
 Every component reports failures through `humblebrag.alerts.alert(event, detail)`.
 It sends a plain-text Telegram message starting with ⚠️ and the failed step,

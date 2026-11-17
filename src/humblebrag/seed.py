@@ -85,7 +85,7 @@ def format_seed_line(text: str, used_on: date | None, generated: bool) -> str:
     return " ".join(parts)
 
 
-def _write_atomically(path: Path, content: str) -> None:
+def write_atomically(path: Path, content: str) -> None:
     """Write ``content`` to ``path`` via a temp file in the same directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = path.stat().st_mode & 0o777 if path.exists() else FILE_MODE
@@ -115,7 +115,7 @@ class SeedFile:
     def load(cls, path: Path = DEFAULT_SEED_PATH) -> "SeedFile":
         """Read the file, creating it empty (and its directory) if missing."""
         if not path.exists():
-            _write_atomically(path, "")
+            write_atomically(path, "")
             logger.info("Created empty seed file at %s", path)
         try:
             content = path.read_bytes().decode(ENCODING)
@@ -169,4 +169,4 @@ class SeedFile:
 
     def save(self) -> None:
         """Atomically write the file: temp file, then rename."""
-        _write_atomically(self.path, self.text)
+        write_atomically(self.path, self.text)

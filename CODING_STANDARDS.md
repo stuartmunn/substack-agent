@@ -65,3 +65,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [ERR-08] Startup and cleanup of long-lived resources share one `try`/`finally`, and cleanup only stops what actually started (from PR #8, 2026-11-17)
 - [ERR-09] Error text sent to logs or alerts unwraps `ExceptionGroup`s to the leaf exceptions, so the real cause is named (from PR #9, 2026-11-17)
 - [ERR-10] Functions that write files create the target's parent directory themselves rather than assuming an earlier call did (from PR #10, 2026-11-17)
+- [ERR-11] Read-modify-write of shared state files on the data volume holds a file lock with a bounded wait, and fails with a typed error if it times out (from PR #11, 2026-11-17)
