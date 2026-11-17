@@ -12,9 +12,15 @@ from humblebrag.persona import Persona
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 2
-GENERATION_MAX_TOKENS = 4096
+MIN_GENERATION_TOKENS = 4096
+TOKENS_PER_WORD_ALLOWANCE = 3
+JSON_OVERHEAD_TOKENS = 512
 REQUIRED_FIELDS = ("title", "subtitle", "body_markdown")
 _FENCE = re.compile(r"\A```(?:json)?\s*(?P<inner>.*?)\s*```\Z", re.DOTALL)
+_LINK = re.compile(
+    r"\[[^\]]*\]\([^)]*\)|\[[^\]]*\]\[[^\]]*\]|https?://|www\.|<a\b",
+    re.IGNORECASE,
+)
 _IMAGE = re.compile(r"!\[[^\]]*\](?:\(|\[)|<img\b", re.IGNORECASE)
 
 
@@ -77,6 +83,8 @@ def _parse_post(reply: str, min_words: int, max_words: int) -> GeneratedPost:
     body = values["body_markdown"]
     if _IMAGE.search(body):
         raise MalformedPostError("body_markdown contains an image")
+    if _LINK.search(body):
+        raise MalformedPostError("body_markdown contains a link")
     word_count = len(body.split())
     if not min_words <= word_count <= max_words:
         raise MalformedPostError(
@@ -94,6 +102,10 @@ class PostGenerator:
         self._persona = persona
         self._min_words = config.min_post_words
         self._max_words = config.max_post_words
+        self._max_tokens = max(
+            MIN_GENERATION_TOKENS,
+            config.max_post_words * TOKENS_PER_WORD_ALLOWANCE + JSON_OVERHEAD_TOKENS,
+        )
 
     async def generate(self, seed: str, steer: str | None = None) -> GeneratedPost:
         """Return a post for ``seed``; retry once on a malformed reply.
@@ -107,7 +119,7 @@ class PostGenerator:
                 seed, steer, self._min_words, self._max_words, problem
             )
             reply = await self._client.complete(
-                self._persona.text, prompt, GENERATION_MAX_TOKENS
+                self._persona.text, prompt, self._max_tokens
             )
             try:
                 return _parse_post(reply, self._min_words, self._max_words)

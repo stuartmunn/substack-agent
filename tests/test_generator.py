@@ -10,7 +10,10 @@ from humblebrag import generator as generator_module
 from humblebrag.claude_client import ClaudeAPIError
 from humblebrag.config import Config, load_config
 from humblebrag.generator import (
+    JSON_OVERHEAD_TOKENS,
     MAX_ATTEMPTS,
+    MIN_GENERATION_TOKENS,
+    TOKENS_PER_WORD_ALLOWANCE,
     GeneratedPost,
     PostGenerationError,
     PostGenerator,
@@ -198,3 +201,35 @@ def test_module_offers_posts_only() -> None:
     """AC5: the public surface has no Notes or cover image generation."""
     public = {n.lower() for n in dir(generator_module) if not n.startswith("_")}
     assert not any("note" in n or "cover" in n or "image" in n for n in public)
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        "[here](http://x.com)",
+        "[here][ref]",
+        "see https://x.com now",
+        "see www.x.com now",
+        '<a href="http://x.com">here</a>',
+    ],
+)
+async def test_body_with_a_link_is_rejected(link: str) -> None:
+    """The prompt forbids links, so any link syntax is malformed."""
+    client = StubClient([_reply(body_markdown=_body(300) + " " + link), _reply()])
+    post = await _generator(client).generate(SEED)
+    assert "link" in client.calls[1]["prompt"]
+    assert post.body_markdown == _body(300)
+
+
+async def test_token_budget_has_a_floor_and_grows_with_the_word_range() -> None:
+    """Large word ranges get a larger token budget so JSON is not cut off."""
+    small = StubClient([_reply()])
+    await _generator(small).generate(SEED)
+    assert small.calls[0]["max_tokens"] == MIN_GENERATION_TOKENS
+
+    config = load_config({**ENV, "POST_MIN_WORDS": "10", "POST_MAX_WORDS": "5000"})
+    large = StubClient([_reply(20)])
+    await _generator(large, config).generate(SEED)
+    assert large.calls[0]["max_tokens"] == (
+        5000 * TOKENS_PER_WORD_ALLOWANCE + JSON_OVERHEAD_TOKENS
+    )
