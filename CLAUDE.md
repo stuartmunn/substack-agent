@@ -53,8 +53,8 @@ Claude Code keeps the story's status current (use the Atlassian tools):
 ## PR-Agent review loop
 PR-Agent is installed on the repo and reviews automatically when a PR is raised.
 1. After raising the PR, wait 3–5 minutes, then poll the PR comments
-   (`gh pr view <n> --comments`) until PR-Agent's review appears.
-   If nothing after 15 minutes, comment on the PR and stop.
+   (`gh pr view <n> --comments` or `gh api`) until PR-Agent's review appears.
+   If nothing after 15 minutes, post a note on the PR, alert Stuart, and stop.
 2. For every finding, do one of:
    - Fix it, or
    - Mitigate it (explain how), or
@@ -62,12 +62,14 @@ PR-Agent is installed on the repo and reviews automatically when a PR is raised.
 3. Push fixes, then comment exactly `/review` (nothing else in the comment)
    to trigger a fresh review. Wait and poll as in step 1.
 4. Repeat until PR-Agent's latest review has no unresolved valid findings.
-5. Add each valid finding as a new rule in `CODING_STANDARDS.md`
-   (in the same PR) unless an existing rule covers it.
-6. After 5 review rounds without a clean review, stop, comment a summary on the
-   PR, and leave it for Stuart.
+   "Clean" is a judgement call: write the reasoning on the PR for audit.
+5. Add each valid finding as a new rule in `CODING_STANDARDS.md` under
+   "Learned from PR-Agent" (in the same PR), as
+   `- [ID] rule (from PR #n, YYYY-MM-DD)`, unless an existing rule covers it.
+6. After 5 review rounds without a clean review, stop, post a summary on the
+   PR, and do not merge. Leave it for Stuart.
 
 ## Merge
-- Merge only when: CI green, PR-Agent clean (as above), no merge conflicts.
+- Merge only when: CI green, PR-Agent's latest review clean (as above), no merge conflicts.
 - Squash merge with `gh pr merge --squash --delete-branch`.
 - Then pull `main` before starting the next story.
