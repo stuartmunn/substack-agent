@@ -208,6 +208,7 @@ def test_module_offers_posts_only() -> None:
     [
         "[here](http://x.com)",
         "[here][ref]\n\n[ref]: example.com",
+        '\n\n[ref]: example.com "A title"',
         "see https://x.com now",
         "see www.x.com now",
         '<a href="http://x.com">here</a>',
@@ -235,9 +236,10 @@ async def test_token_budget_has_a_floor_and_grows_with_the_word_range() -> None:
     )
 
 
-async def test_bracketed_footnote_markers_are_not_links() -> None:
-    """Near-miss: "[1][2]" is not a link, so it must not trigger a retry."""
-    client = StubClient([_reply(body_markdown=_body(300) + " [1][2]")])
+@pytest.mark.parametrize("footnote", ["[1][2]", "\n\n[1]: see page 5"])
+async def test_footnote_style_text_is_not_a_link(footnote: str) -> None:
+    """Near-miss: footnote markers are not links, so they must not retry."""
+    client = StubClient([_reply(body_markdown=_body(300) + footnote)])
     post = await _generator(client).generate(SEED)
     assert len(client.calls) == 1
-    assert post.body_markdown.endswith("[1][2]")
+    assert post.body_markdown.endswith(footnote.strip())

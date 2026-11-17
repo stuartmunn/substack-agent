@@ -18,7 +18,7 @@ JSON_OVERHEAD_TOKENS = 512
 REQUIRED_FIELDS = ("title", "subtitle", "body_markdown")
 _FENCE = re.compile(r"\A```(?:json)?\s*(?P<inner>.*?)\s*```\Z", re.DOTALL)
 _LINK = re.compile(
-    r"\[[^\]]*\]\([^)]*\)|^\s*\[[^\]]+\]:\s*\S+|https?://|www\.|<a\b",
+    r"\[[^\]]*\]\([^)]*\)|^\s*\[[^\]]+\]:\s*\S+\s*(?:[\"'(].*)?$|https?://|www\.|<a\b",
     re.IGNORECASE | re.MULTILINE,
 )
 _IMAGE = re.compile(r"!\[[^\]]*\](?:\(|\[)|<img\b", re.IGNORECASE)
