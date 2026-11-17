@@ -11,10 +11,10 @@ ENV_VARS = (
     "TELEGRAM_CHAT_ID",
     "ANTHROPIC_API_KEY",
     "CLAUDE_MODEL",
-    "SUBSTACK_EMAIL",
-    "SUBSTACK_PASSWORD",
     "SUBSTACK_PUBLICATION_URL",
-    "DATA_DIR",
+    "SUBSTACK_COOKIE",
+    "RUN_TIME",
+    "TZ",
 )
 
 
@@ -55,7 +55,7 @@ def test_env_example_lists_every_variable_without_values() -> None:
     }
     for name in ENV_VARS:
         assert name in entries, name
-    for secret in ("TELEGRAM_BOT_TOKEN", "ANTHROPIC_API_KEY", "SUBSTACK_PASSWORD"):
+    for secret in ("TELEGRAM_BOT_TOKEN", "ANTHROPIC_API_KEY", "SUBSTACK_COOKIE"):
         assert entries[secret] == ""
 
 
