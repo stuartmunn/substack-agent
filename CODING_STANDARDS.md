@@ -52,6 +52,7 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [DKR-03] No inbound ports are exposed; Telegram uses long polling.
 - [DKR-04] Persistent state lives only on the `/data` volume.
 - [DKR-05] Secrets are passed via Docker secrets or env, never baked into the image.
+- [DKR-06] Required compose variables use `${VAR:?message}` so `docker compose up` fails fast when one is unset (from PR #6, 2026-11-17)
 
 ## Learned from PR-Agent
 <!-- Format: - [ID] rule (from PR #n, YYYY-MM-DD) -->
