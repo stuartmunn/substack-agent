@@ -22,10 +22,10 @@ def touch_heartbeat(path: Path) -> None:
 
 
 def heartbeat_is_fresh(path: Path, now: float, max_age: float) -> bool:
-    """Return True if the heartbeat file exists and is at most ``max_age`` old."""
+    """Return True if the heartbeat file is readable and at most ``max_age`` old."""
     try:
         age = now - path.stat().st_mtime
-    except FileNotFoundError:
+    except OSError:
         return False
     return age <= max_age
 

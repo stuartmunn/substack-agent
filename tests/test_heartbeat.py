@@ -86,6 +86,16 @@ def test_heartbeat_loop_touches_file_and_stops_when_cancelled(
     asyncio.run(run())
 
 
+def test_unreadable_heartbeat_is_unhealthy_not_a_crash(tmp_path: Path) -> None:
+    """A non-missing OS error reading the heartbeat means unhealthy, not a traceback."""
+    path = tmp_path / "hb"
+    path.mkdir()
+    blocker = path / "x"
+    blocker.write_text("")
+    # A path whose parent is a file raises NotADirectoryError (an OSError).
+    assert check_health(blocker / "hb") != 0
+
+
 def test_beat_interval_is_30_seconds() -> None:
     """AC2: heartbeat touched every 30s."""
     assert HEARTBEAT_INTERVAL_SECONDS == 30

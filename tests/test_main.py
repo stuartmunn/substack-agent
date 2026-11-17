@@ -1,7 +1,10 @@
 """Tests for the container entrypoint."""
 
+import asyncio
 import json
 import logging
+import os
+import signal
 
 import pytest
 
@@ -56,3 +59,23 @@ def test_main_runs_heartbeat_and_never_logs_secrets(
     assert ran == [True]
     assert "claude-sonnet-5-5" in output
     assert "SECRET" not in output
+
+
+def test_sigterm_stops_the_loop_cleanly(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SIGTERM (docker stop) ends the run loop gracefully instead of hanging."""
+
+    async def forever() -> None:
+        await asyncio.sleep(3600)
+
+    async def run() -> None:
+        asyncio.get_running_loop().call_later(
+            0.05, os.kill, os.getpid(), signal.SIGTERM
+        )
+        await asyncio.wait_for(entrypoint.run_until_signalled(), timeout=5)
+
+    monkeypatch.setattr(entrypoint, "heartbeat_loop", forever)
+    entrypoint.configure_logging()
+    asyncio.run(run())
+    assert "Shutdown signal received" in capsys.readouterr().out
