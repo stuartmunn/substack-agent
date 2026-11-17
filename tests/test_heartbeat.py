@@ -1,6 +1,8 @@
 """Tests for the heartbeat and healthcheck (SA-16 AC2 and AC3)."""
 
 import asyncio
+import json
+import logging
 import os
 import re
 import time
@@ -104,6 +106,45 @@ def test_dockerfile_healthcheck_runs_the_heartbeat_check() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text()
     assert "HEALTHCHECK" in dockerfile
     assert "humblebrag.heartbeat" in dockerfile
+
+
+def test_heartbeat_loop_survives_write_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A failed heartbeat write is logged and retried, not fatal."""
+    path = tmp_path / "missing-dir" / "hb"
+
+    async def run() -> None:
+        task = asyncio.create_task(heartbeat_loop(path, interval=0.01))
+        await asyncio.sleep(0.05)
+        assert not task.done()
+        path.parent.mkdir()
+        await asyncio.sleep(0.05)
+        assert path.is_file()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    with caplog.at_level(logging.ERROR):
+        asyncio.run(run())
+    assert "Failed to write heartbeat file" in caplog.text
+
+
+def test_healthcheck_main_logs_json_to_stdout(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The healthcheck process logs JSON on stdout like the rest of the app."""
+
+    def unhealthy() -> int:
+        heartbeat.logger.error("stale")
+        return 1
+
+    monkeypatch.setattr(heartbeat, "check_health", unhealthy)
+    with pytest.raises(SystemExit):
+        heartbeat.main()
+    entry = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert entry["level"] == "ERROR"
+    assert entry["event"] == "stale"
 
 
 def test_healthcheck_main_exits_with_check_result(

@@ -2,10 +2,11 @@
 
 import asyncio
 import logging
-import os
 import sys
 import time
 from pathlib import Path
+
+from humblebrag.logging_setup import configure_logging
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,6 @@ EXIT_UNHEALTHY = 1
 def touch_heartbeat(path: Path) -> None:
     """Create the heartbeat file or update its modification time."""
     path.touch()
-    os.utime(path)
 
 
 def heartbeat_is_fresh(path: Path, now: float, max_age: float) -> bool:
@@ -35,7 +35,10 @@ async def heartbeat_loop(
 ) -> None:
     """Touch the heartbeat forever; it stops if the event loop stops or hangs."""
     while True:
-        touch_heartbeat(path)
+        try:
+            touch_heartbeat(path)
+        except OSError:
+            logger.exception("Failed to write heartbeat file; will retry")
         await asyncio.sleep(interval)
 
 
@@ -49,6 +52,7 @@ def check_health(path: Path = HEARTBEAT_PATH) -> int:
 
 def main() -> None:
     """Docker HEALTHCHECK entrypoint."""
+    configure_logging()
     sys.exit(check_health())
 
 
