@@ -12,6 +12,11 @@ from humblebrag import __main__ as entrypoint
 from humblebrag.config import Config, load_config
 from humblebrag.logging_setup import redactor
 
+
+class InvalidTokenError(Exception):
+    """Stand-in for a library error that carries the failure reason."""
+
+
 VALUES = {
     "TELEGRAM_BOT_TOKEN": "tok-SECRET",
     "TELEGRAM_CHAT_ID": "1",
@@ -141,3 +146,45 @@ def test_crash_exits_non_zero_even_if_the_alert_machinery_fails(
     assert exit_info.value.code != 0
     assert "Failed to send crash alert" in captured.out
     assert "Traceback" not in captured.err
+
+
+def test_describe_error_unwraps_exception_groups_to_the_real_causes() -> None:
+    """A TaskGroup failure is described by its leaf errors, not the wrapper."""
+    group = ExceptionGroup(
+        "unhandled errors in a TaskGroup",
+        [
+            InvalidTokenError("token was rejected"),
+            ExceptionGroup("nested", [OSError("disk full")]),
+        ],
+    )
+    text = entrypoint.describe_error(group)
+    assert "InvalidTokenError: token was rejected" in text
+    assert "OSError: disk full" in text
+    assert "ExceptionGroup" not in text
+    assert entrypoint.describe_error(RuntimeError("x")) == "RuntimeError: x"
+
+
+def test_real_task_group_failure_alerts_with_the_underlying_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End to end: a failing bot task makes the crash alert name its error."""
+    for name, value in VALUES.items():
+        monkeypatch.setenv(name, value)
+    details: list[str] = []
+
+    async def failing_bot(_config: Config) -> None:
+        raise InvalidTokenError("token was rejected")
+
+    async def idle_heartbeat() -> None:
+        await asyncio.sleep(3600)
+
+    async def capture_alert(_config: Config, _event: str, detail: str) -> bool:
+        details.append(detail)
+        return True
+
+    monkeypatch.setattr(entrypoint, "run_bot", failing_bot)
+    monkeypatch.setattr(entrypoint, "heartbeat_loop", idle_heartbeat)
+    monkeypatch.setattr(entrypoint, "send_standalone_alert", capture_alert)
+    with pytest.raises(SystemExit):
+        entrypoint.main()
+    assert details == ["agent crashed with InvalidTokenError: token was rejected"]

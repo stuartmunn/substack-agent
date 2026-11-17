@@ -25,6 +25,13 @@ def _secret_values(config: Config) -> list[str]:
     ]
 
 
+def describe_error(error: BaseException) -> str:
+    """Describe ``error``, unwrapping exception groups to their leaf errors."""
+    if isinstance(error, BaseExceptionGroup):
+        return "; ".join(describe_error(inner) for inner in error.exceptions)
+    return f"{type(error).__name__}: {error}"
+
+
 def _request_stop(tasks: list[asyncio.Task[None]]) -> None:
     """Cancel every task after a shutdown signal."""
     logger.info("Shutdown signal received; stopping")
@@ -58,7 +65,7 @@ def main() -> None:
         asyncio.run(run_until_signalled(config))
     except Exception as error:
         logger.exception("Agent stopped with an unhandled error")
-        detail = f"agent crashed with {type(error).__name__}: {error}"
+        detail = f"agent crashed with {describe_error(error)}"
         try:
             asyncio.run(send_standalone_alert(config, "agent", detail))
         except Exception:
