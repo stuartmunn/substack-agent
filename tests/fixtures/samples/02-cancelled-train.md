@@ -17,7 +17,7 @@ Delays are just growth that hasn't arrived yet.
 
 Here's what it taught me about leadership:
 
-🚂 A real leader doesn't wait for the train. They become the platform.
+🚂 A real leader doesn't wait for the train, they become the platform.
 
 📈 Every announcement is an opportunity to listen to myself think.
 

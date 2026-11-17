@@ -67,3 +67,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [ERR-10] Functions that write files create the target's parent directory themselves rather than assuming an earlier call did (from PR #10, 2026-11-17)
 - [ERR-11] Read-modify-write of shared state files on the data volume holds a file lock with a bounded wait, and fails with a typed error if it times out (from PR #11, 2026-11-17)
 - [PY-09] Parsers of hand-edited text files normalise CRLF line endings before matching (from PR #13, 2026-11-17)
+- [TST-07] Format checks over fixtures cover every line type (including bullets), not just plain prose lines (from PR #13, 2026-11-17)

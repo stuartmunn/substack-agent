@@ -17,7 +17,7 @@ Because in that moment, I realised I was just a regular guy with a very large vi
 
 Here's what it taught me about leadership:
 
-✅ Great leaders don't cry over spilt milk. They cry over spilt oat milk, quietly, then pivot.
+✅ Great leaders don't cry over spilt milk, they cry over spilt oat milk, quietly, then pivot.
 
 🚀 Every puddle is a pipeline.
 

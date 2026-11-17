@@ -98,9 +98,7 @@ def test_sample_follows_format(path: Path) -> None:
     lines = [line for line in text.splitlines() if line.strip()]
     assert lines[0].startswith("# ")
     body_lines = lines[1:]
-    assert not any(
-        SENTENCE_BREAK.search(line) for line in body_lines if line[0].isalpha()
-    )
+    assert not any(SENTENCE_BREAK.search(line) for line in body_lines)
     assert sum(bool(EMOJI_BULLET.match(line)) for line in body_lines) >= 3
     ends_agree = lines[-1] == "Agree?"
     ends_tags = bool(HASHTAG_LINE.match(lines[-1]))

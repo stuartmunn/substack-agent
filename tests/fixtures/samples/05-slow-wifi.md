@@ -21,7 +21,7 @@ Here's what it taught me about leadership:
 
 🧘 Buffering is just reflection with a loading icon.
 
-🚀 Real leaders don't need bandwidth. They have vision.
+🚀 Real leaders don't need bandwidth, they have vision.
 
 🙏 I'm humbled that my router believed in me enough to fail.
 

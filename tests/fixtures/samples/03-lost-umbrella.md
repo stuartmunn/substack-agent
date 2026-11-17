@@ -15,7 +15,7 @@ A little damp, a little exposed, a lot visionary.
 
 Here's what it taught me about leadership:
 
-☔ Protection is overrated. Presence is everything.
+☔ Protection is overrated, presence is everything.
 
 🌧️ Rain is just the market testing your commitment.
 
