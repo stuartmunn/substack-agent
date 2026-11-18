@@ -114,6 +114,11 @@ class SubstackPublisher:
             raise SubstackError(
                 f"Substack could not be reached ({type(error).__name__})"
             ) from None
+        except Exception as error:  # library changed: still a typed, alerted error
+            logger.exception("Unexpected error from python-substack")
+            raise SubstackError(
+                f"Substack session check failed unexpectedly ({type(error).__name__})"
+            ) from None
 
     @staticmethod
     def _log_failure(error: Exception) -> None:

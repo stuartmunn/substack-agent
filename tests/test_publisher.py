@@ -234,8 +234,8 @@ async def test_startup_check_survives_an_unexpected_error(
     publisher = SubstackPublisher(_config(), _failing(RuntimeError("library changed")))
     assert await publisher.check_session_or_alert() is False
     assert len(alerts) == 1
-    assert "RuntimeError: library changed" in alerts[0]
-    assert "Unexpected error" in caplog.text
+    assert "RuntimeError" in alerts[0]
+    assert "Unexpected error from python-substack" in caplog.text
 
 
 # AC3: expired session -> exact alert with the runbook link
@@ -470,3 +470,14 @@ async def test_failure_details_are_logged_without_the_cookie(
     assert "503" in caplog.text
     assert "upstream down" in caplog.text
     assert "SUPER-SECRET" not in caplog.text
+
+
+async def test_unexpected_library_errors_become_alerted_substack_errors(
+    alerts: list[str],
+) -> None:
+    """PR-Agent: any exception type from the library is typed and alerted."""
+    publisher = SubstackPublisher(_config(), _failing(json.JSONDecodeError("x", "", 0)))
+    with pytest.raises(SubstackError, match="JSONDecodeError"):
+        await publisher.ensure_session()
+    assert len(alerts) == 1
+    assert "Session check failed" in alerts[0]
