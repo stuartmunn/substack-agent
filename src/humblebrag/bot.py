@@ -92,9 +92,14 @@ def build_application(config: Config, store: DraftStore | None = None) -> Applic
     application.add_handler(TypeHandler(Update, guard), group=GUARD_GROUP)
     application.add_handler(CommandHandler(list(COMMANDS), show_help))
     if store is not None:
-        application.bot_data[STORE_KEY] = store
-        application.add_handler(CallbackQueryHandler(handle_button))
+        install_buttons(application, store)
     return application
+
+
+def install_buttons(application: Application, store: DraftStore) -> None:
+    """Route the Approve / Redo / Bin buttons using ``store``."""
+    application.bot_data[STORE_KEY] = store
+    application.add_handler(CallbackQueryHandler(handle_button))
 
 
 async def _run_startup(on_started: Callable[[], Awaitable[object]]) -> None:
@@ -107,14 +112,20 @@ async def _run_startup(on_started: Callable[[], Awaitable[object]]) -> None:
 
 
 async def run_bot(
-    config: Config, on_started: Callable[[], Awaitable[object]] | None = None
+    config: Config,
+    on_started: Callable[[], Awaitable[object]] | None = None,
+    setup: Callable[[Application], object] | None = None,
 ) -> None:
     """Run the bot with long polling (no inbound port) until cancelled.
 
     ``on_started`` runs once as a background task after polling has started and
     alerts work, e.g. the Substack session check. It is cancelled on shutdown.
+    ``setup`` is called with the application before polling starts, to install
+    handlers. A failure in it stops the bot (and so the process).
     """
     application = build_application(config)
+    if setup is not None:
+        setup(application)
     startup_task: asyncio.Task[object] | None = None
     async with application:
         try:

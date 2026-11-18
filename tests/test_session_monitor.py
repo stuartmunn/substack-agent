@@ -322,8 +322,12 @@ def test_main_wires_the_monitor_into_the_bot_startup() -> None:
     source = (
         Path(__file__).resolve().parent.parent / "src/humblebrag/__main__.py"
     ).read_text()
-    assert "monitor.run_forever()" in source
-    assert "SessionMonitor(" in source
+    assert "on_started=runtime.start" in source
+    wiring = (
+        Path(__file__).resolve().parent.parent / "src/humblebrag/wiring.py"
+    ).read_text()
+    assert "monitor.run_forever()" in wiring
+    assert "SessionMonitor(" in wiring
 
 
 async def test_a_bad_state_file_at_startup_does_not_stop_the_monitor(
