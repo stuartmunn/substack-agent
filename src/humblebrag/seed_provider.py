@@ -59,22 +59,20 @@ class SeedProvider:
         if seed is not None:
             return seed
         logger.info("No unused seeds; asking Claude for one")
-        await self._add_generated_seed()
-        seed = self._queue.pick(draft_id)
-        if seed is None:
-            await alert(ALERT_EVENT, "A generated seed was added but cannot be picked")
-            raise SeedGenerationError("Generated seed was not available to pick")
-        return seed
+        return await self._generate_seed(draft_id)
 
-    async def _add_generated_seed(self) -> None:
-        """Ask Claude until a new, unique seed is appended, or give up."""
+    async def _generate_seed(self, draft_id: str) -> Seed:
+        """Ask Claude until a new, unique seed is reserved for the draft."""
         for attempt in range(1, MAX_SEED_ATTEMPTS + 1):
             reply = await self._client.complete(
                 SEED_SYSTEM, self._prompt(), SEED_MAX_TOKENS
             )
             suggestion = _clean_suggestion(reply)
-            if suggestion is not None and self._queue.add_generated(suggestion):
-                return
+            seed = (
+                self._queue.add_generated(suggestion, draft_id) if suggestion else None
+            )
+            if seed is not None:
+                return seed
             logger.warning("Seed suggestion %d unusable or duplicate", attempt)
         await alert(
             ALERT_EVENT,

@@ -246,5 +246,29 @@ def test_add_generated_waits_for_the_lock(
     with lock_path.open("a") as held:
         fcntl.flock(held, fcntl.LOCK_EX)
         with pytest.raises(ReservationBusyError):
-            queue.add_generated("Squeaky door")
+            queue.add_generated("Squeaky door", DRAFT)
+    assert path.read_text() == ALL_USED
+
+
+def test_add_generated_reserves_the_seed_atomically(tmp_path: Path) -> None:
+    """ERR-12: no other draft can take the new seed between append and reserve."""
+    path = tmp_path / "seed.md"
+    path.write_text(ALL_USED)
+    queue = SeedQueue(path, lambda: TODAY)
+    mine = queue.add_generated("Squeaky door", "draft-a")
+    assert mine is not None
+    assert mine.text == "Squeaky door"
+    assert mine.generated
+    assert queue.pick("draft-b") is None
+    assert queue.pick("draft-a") == mine
+
+
+def test_add_generated_rejects_a_duplicate_without_touching_the_file(
+    tmp_path: Path,
+) -> None:
+    """AC3: a case-insensitive duplicate is refused and nothing is written."""
+    path = tmp_path / "seed.md"
+    path.write_text(ALL_USED)
+    queue = SeedQueue(path, lambda: TODAY)
+    assert queue.add_generated("SPILLED coffee", DRAFT) is None
     assert path.read_text() == ALL_USED

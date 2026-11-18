@@ -93,20 +93,21 @@ class SeedQueue:
         """Every seed's text (used or not), in file order."""
         return [seed.text for seed in SeedFile.load(self._seed_path).seeds]
 
-    def add_generated(self, text: str) -> bool:
-        """Append ``text`` as a ``(generated)`` seed unless it duplicates one.
+    def add_generated(self, text: str, draft_id: str) -> Seed | None:
+        """Append ``text`` as a ``(generated)`` seed and reserve one for the draft.
 
         Duplicates are matched case-insensitively against every seed, used or
-        not. Returns True if the seed was added.
+        not, and return None without changing anything. Appending and reserving
+        happen under one lock, so no other draft can take the new seed first.
         """
         with self._locked():
             seed_file = SeedFile.load(self._seed_path)
             known = {seed_key(seed.text) for seed in seed_file.seeds}
             if seed_key(text) in known:
-                return False
+                return None
             seed_file.append_seed(text, generated=True)
             seed_file.save()
-            return True
+            return self._pick_locked(draft_id)
 
     def _pick_locked(self, draft_id: str) -> Seed | None:
         """The body of ``pick``; the caller holds the lock."""

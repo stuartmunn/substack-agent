@@ -75,3 +75,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [GEN-08] Content-filter patterns are tested against a legitimate near-miss as well as the banned forms (from PR #14, 2026-11-17)
 - [SEC-11] Safety wordlist tokenisers split on everything that is not a letter, so quotes, apostrophes and punctuation cannot hide a listed word (from PR #15, 2026-11-18)
 - [SEC-12] Untrusted text placed inside delimiter tags in a prompt has any copy of the delimiter neutralised first, and a test proves it cannot close the tag (from PR #15, 2026-11-18)
+- [ERR-12] Check-then-act sequences on shared state (generate then reserve, read then write) happen under a single lock acquisition, not two (from PR #16, 2026-11-18)
