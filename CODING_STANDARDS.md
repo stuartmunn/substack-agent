@@ -73,3 +73,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [GEN-06] Every constraint a prompt tells the model to obey (links, images, length) is also validated in code on the reply (from PR #14, 2026-11-17)
 - [GEN-07] Model output budgets (max tokens) derive from configured limits, not a fixed constant (from PR #14, 2026-11-17)
 - [GEN-08] Content-filter patterns are tested against a legitimate near-miss as well as the banned forms (from PR #14, 2026-11-17)
+- [SEC-11] Safety wordlist tokenisers split on everything that is not a letter, so quotes, apostrophes and punctuation cannot hide a listed word (from PR #15, 2026-11-18)

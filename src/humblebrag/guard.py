@@ -21,7 +21,7 @@ CHECK_CLASSIFIER = "classifier"
 ALERT_EVENT = "guard"
 PASS_ICON = "🛡️"
 FAIL_ICON = "🚫"
-_WORD = re.compile(r"[a-z']+")
+_WORD = re.compile(r"[a-z]+")
 
 # Whole words only, so "class", "assess" and "cockpit" never match.
 PROFANITY_WORDLIST = frozenset(

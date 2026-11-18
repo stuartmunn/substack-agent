@@ -102,6 +102,14 @@ def test_wordlist_checks_title_subtitle_and_body(field: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "text", ["'shit'", "shit's", "shit\u2019s", '"Shit!"', "(shit)", "shit-show"]
+)
+def test_wordlist_catches_quoted_possessive_and_punctuated_words(text: str) -> None:
+    """AC1: quotes, apostrophes and punctuation do not hide a listed word."""
+    assert not check_wordlist(GeneratedPost("Fine", "Fine", text)).passed
+
+
+@pytest.mark.parametrize(
     "text", ["class assessment", "the cockpit", "Scunthorpe", "a classic passage"]
 )
 def test_wordlist_ignores_words_that_merely_contain_a_listed_word(text: str) -> None:
