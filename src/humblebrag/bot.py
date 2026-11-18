@@ -8,13 +8,16 @@ from telegram.ext import (
     Application,
     ApplicationBuilder,
     ApplicationHandlerStop,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     TypeHandler,
 )
 
 from humblebrag.alerts import configure_alerts, telegram_sender
+from humblebrag.buttons import STORE_KEY, handle_button
 from humblebrag.config import Config
+from humblebrag.drafts import DraftStore
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +68,11 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await message.reply_text(help_text())
 
 
-def build_application(config: Config) -> Application:
-    """Build the bot application with the chat guard and command handlers."""
+def build_application(config: Config, store: DraftStore | None = None) -> Application:
+    """Build the bot application with the chat guard and command handlers.
+
+    With a draft ``store`` it also routes the Approve / Redo / Bin buttons.
+    """
     application = (
         ApplicationBuilder()
         .token(config.telegram_bot_token)
@@ -83,6 +89,9 @@ def build_application(config: Config) -> Application:
     application.bot_data[ALLOWED_CHAT_KEY] = config.telegram_chat_id
     application.add_handler(TypeHandler(Update, guard), group=GUARD_GROUP)
     application.add_handler(CommandHandler(list(COMMANDS), show_help))
+    if store is not None:
+        application.bot_data[STORE_KEY] = store
+        application.add_handler(CallbackQueryHandler(handle_button))
     return application
 
 
