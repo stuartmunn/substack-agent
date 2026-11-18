@@ -69,3 +69,7 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [PY-09] Parsers of hand-edited text files normalise CRLF line endings before matching (from PR #13, 2026-11-17)
 - [TST-07] Format checks over fixtures cover every line type (including bullets), not just plain prose lines (from PR #13, 2026-11-17)
 - [TST-08] Limits asserted in tests match the limits stated in the prompt or spec exactly, with no extra slack (from PR #13, 2026-11-17)
+- [SEC-10] Content filters cover every syntax that can carry the banned thing (inline, reference-style and HTML images), not just the common one (from PR #14, 2026-11-17)
+- [GEN-06] Every constraint a prompt tells the model to obey (links, images, length) is also validated in code on the reply (from PR #14, 2026-11-17)
+- [GEN-07] Model output budgets (max tokens) derive from configured limits, not a fixed constant (from PR #14, 2026-11-17)
+- [GEN-08] Content-filter patterns are tested against a legitimate near-miss as well as the banned forms (from PR #14, 2026-11-17)

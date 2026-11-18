@@ -14,6 +14,8 @@ logger = logging.getLogger(__name__)
 FILE_SUFFIX = "_FILE"
 DEFAULT_RUN_TIME = "08:30"
 DEFAULT_TZ = "Europe/London"
+DEFAULT_MIN_POST_WORDS = 250
+DEFAULT_MAX_POST_WORDS = 600
 EXIT_CONFIG_ERROR = 1
 
 
@@ -36,6 +38,8 @@ class Config:
     substack_cookie: str = field(repr=False)
     run_time: time
     tz: ZoneInfo
+    min_post_words: int = DEFAULT_MIN_POST_WORDS
+    max_post_words: int = DEFAULT_MAX_POST_WORDS
 
 
 def _read_value(env: Mapping[str, str], name: str) -> str | None:
@@ -88,6 +92,20 @@ def _parse_chat_id(text: str) -> int:
         raise ConfigError("TELEGRAM_CHAT_ID must be an integer") from None
 
 
+def _parse_word_limit(env: Mapping[str, str], name: str, default: int) -> int:
+    """Parse an optional positive integer word limit."""
+    text = _read_value(env, name)
+    if text is None:
+        return default
+    try:
+        value = int(text)
+    except ValueError:
+        raise ConfigError(f"{name} must be a positive integer") from None
+    if value < 1:
+        raise ConfigError(f"{name} must be a positive integer")
+    return value
+
+
 def load_config(env: Mapping[str, str] | None = None) -> Config:
     """Build a Config from ``env`` (default: the process environment)."""
     source = os.environ if env is None else env
@@ -100,6 +118,10 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     cookie = _require(source, "SUBSTACK_COOKIE", missing)
     if missing:
         raise ConfigError("Missing required config: " + ", ".join(missing))
+    min_words = _parse_word_limit(source, "POST_MIN_WORDS", DEFAULT_MIN_POST_WORDS)
+    max_words = _parse_word_limit(source, "POST_MAX_WORDS", DEFAULT_MAX_POST_WORDS)
+    if min_words > max_words:
+        raise ConfigError("POST_MIN_WORDS must not exceed POST_MAX_WORDS")
     return Config(
         telegram_bot_token=token,
         telegram_chat_id=_parse_chat_id(chat_id),
@@ -109,6 +131,8 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         substack_cookie=cookie,
         run_time=_parse_run_time(_read_value(source, "RUN_TIME") or DEFAULT_RUN_TIME),
         tz=_parse_tz(_read_value(source, "TZ") or DEFAULT_TZ),
+        min_post_words=min_words,
+        max_post_words=max_words,
     )
 
 

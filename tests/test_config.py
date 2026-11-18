@@ -130,3 +130,29 @@ def test_secrets_never_appear_in_logs(caplog: pytest.LogCaptureFixture) -> None:
         load_config(BASE_ENV)
     for secret in SECRETS.values():
         assert secret not in caplog.text
+
+
+def test_post_word_range_defaults_to_250_600() -> None:
+    """SA-23 AC4: the default range is 250 to 600 words."""
+    config = load_config(BASE_ENV)
+    assert (config.min_post_words, config.max_post_words) == (250, 600)
+
+
+def test_post_word_range_is_configurable() -> None:
+    """SA-23 AC4: POST_MIN_WORDS and POST_MAX_WORDS override the default."""
+    config = load_config({**BASE_ENV, "POST_MIN_WORDS": "100", "POST_MAX_WORDS": "200"})
+    assert (config.min_post_words, config.max_post_words) == (100, 200)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"POST_MIN_WORDS": "abc"},
+        {"POST_MAX_WORDS": "0"},
+        {"POST_MIN_WORDS": "700"},
+    ],
+)
+def test_invalid_post_word_range_is_a_config_error(overrides: dict[str, str]) -> None:
+    """SA-23 AC4: non-numeric, non-positive or inverted limits are rejected."""
+    with pytest.raises(ConfigError):
+        load_config({**BASE_ENV, **overrides})
