@@ -109,7 +109,12 @@ class DraftStore:
         """Create the database file and table if needed; ``clock`` gives UTC now."""
         self._path = path
         self._clock = clock or (lambda: datetime.now(UTC))
-        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise DraftStoreError(
+                f"Draft database directory cannot be created: {type(error).__name__}"
+            ) from None
         self._execute(SCHEMA)
 
     def create(

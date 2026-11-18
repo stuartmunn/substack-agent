@@ -155,6 +155,14 @@ def test_unreadable_database_is_a_typed_error(tmp_path: Path) -> None:
         DraftStore(path)
 
 
+def test_uncreatable_database_directory_is_a_typed_error(tmp_path: Path) -> None:
+    """ERR-14: a directory that cannot be created raises DraftStoreError."""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory")
+    with pytest.raises(DraftStoreError, match="cannot be created"):
+        DraftStore(blocker / "humblebrag.db")
+
+
 def test_default_database_lives_on_the_data_volume() -> None:
     """DKR-04: persistent state defaults to /data."""
     assert DEFAULT_DB_PATH.parts[:2] == ("/", "data")

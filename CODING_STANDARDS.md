@@ -78,3 +78,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [ERR-12] Check-then-act sequences on shared state (generate then reserve, read then write) happen under a single lock acquisition, not two (from PR #16, 2026-11-18)
 - [SEC-13] Model-generated text written to a line-based file is checked as printable single-line text, rejecting every control character, not just newlines (from PR #16, 2026-11-18)
 - [ERR-13] Blocking waits (file locks, sleeps) inside async code are offloaded with `asyncio.to_thread`, so they cannot stall the shared event loop (from PR #17, 2026-11-18)
+- [ERR-14] A function that documents a typed error wraps every OSError path it can hit (directory creation, open, write), not just its main operation (from PR #18, 2026-11-18)
