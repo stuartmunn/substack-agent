@@ -4,12 +4,11 @@ import asyncio
 import logging
 
 from telegram import Update
-from telegram.error import TelegramError
 from telegram.ext import Application, ContextTypes
 
 from humblebrag.alerts import alert, describe_error
 from humblebrag.buttons import ALREADY_HANDLED_TEXT, register_action
-from humblebrag.drafts import Draft, DraftStateError, DraftStore
+from humblebrag.drafts import STATUS_BINNED, Draft, DraftStateError, DraftStore
 from humblebrag.preview import ACTION_BIN
 from humblebrag.seed_queue import SeedQueue
 
@@ -36,13 +35,13 @@ class BinService:
         if chat is None:
             return
         try:
-            await asyncio.to_thread(self._store.mark_binned, draft.id)
-        except DraftStateError:
-            await context.bot.send_message(chat_id=chat.id, text=ALREADY_HANDLED_TEXT)
-            return
+            already_binned = await asyncio.to_thread(self._bin_draft, draft.id)
         except Exception as error:  # a failed bin must never kill the bot
             logger.exception("Binning draft %d failed", draft.id)
             await self._fail(context, chat.id, draft.id, error)
+            return
+        if already_binned is None:
+            await context.bot.send_message(chat_id=chat.id, text=ALREADY_HANDLED_TEXT)
             return
         try:
             released = await asyncio.to_thread(self._queue.bin_draft, str(draft.id))
@@ -50,10 +49,23 @@ class BinService:
             logger.exception("Releasing the seed of draft %d failed", draft.id)
             await self._fail(context, chat.id, draft.id, error)
             return
+        if already_binned and not released:
+            await context.bot.send_message(chat_id=chat.id, text=ALREADY_HANDLED_TEXT)
+            return
         if not released:
             logger.warning("Draft %d held no seed reservation", draft.id)
-        await self._remove_buttons(update, context, chat.id)
         await context.bot.send_message(chat_id=chat.id, text=BINNED_TEXT)
+        await self._remove_buttons(update, context, chat.id)
+
+    def _bin_draft(self, draft_id: int) -> bool | None:
+        """Bin the draft. True if it was already binned (so a repeat tap can
+        finish releasing the seed), False if just binned, None if it was
+        resolved another way."""
+        try:
+            self._store.mark_binned(draft_id)
+        except DraftStateError:
+            return True if self._store.get(draft_id).status == STATUS_BINNED else None
+        return False
 
     async def _fail(
         self,
@@ -72,7 +84,10 @@ class BinService:
     async def _remove_buttons(
         update: Update, context: ContextTypes.DEFAULT_TYPE, chat_id: int
     ) -> None:
-        """Best effort: take the buttons off the message that was tapped."""
+        """Best effort: take the buttons off the message that was tapped.
+
+        Any failure is logged and swallowed, so it cannot hide the confirmation.
+        """
         query = update.callback_query
         message_id = getattr(query.message, "message_id", None) if query else None
         if message_id is None:
@@ -81,8 +96,8 @@ class BinService:
             await context.bot.edit_message_reply_markup(
                 chat_id=chat_id, message_id=message_id, reply_markup=None
             )
-        except TelegramError as error:
-            logger.warning("Could not remove old buttons: %s", type(error).__name__)
+        except Exception:  # best effort: never mask a completed bin
+            logger.exception("Could not remove old buttons")
 
 
 def install_bin(application: Application, service: BinService) -> None:

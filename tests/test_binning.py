@@ -122,11 +122,12 @@ async def test_old_buttons_are_removed(h: Harness) -> None:
     assert h.bot.edits == [{"chat_id": CHAT, "message_id": 77, "reply_markup": None}]
 
 
+@pytest.mark.parametrize("error", [TelegramError("too old"), RuntimeError("odd")])
 async def test_failing_to_remove_buttons_still_confirms(
-    h: Harness, caplog: pytest.LogCaptureFixture
+    h: Harness, error: Exception, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A Telegram error on the old message is logged, not fatal."""
-    h.bot.edit_error = TelegramError("too old")
+    """ERR-15: any error on the old message is logged and cannot hide success."""
+    h.bot.edit_error = error
     await h.tap()
     assert h.bot.sent == [BINNED_TEXT]
     assert "Could not remove old buttons" in caplog.text
@@ -138,6 +139,30 @@ async def test_binning_twice_says_already_handled(h: Harness) -> None:
     await h.tap()
     assert h.bot.sent == [BINNED_TEXT, ALREADY_HANDLED_TEXT]
     assert h.store.get(h.draft.id).status == STATUS_BINNED
+
+
+async def test_tapping_bin_again_after_a_failed_seed_release_recovers(
+    h: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A binned draft whose seed is stuck can be fixed by tapping Bin again."""
+    real = h.queue.bin_draft
+
+    def broken(_draft_id: str) -> bool:
+        raise ReservationError("lock stuck")
+
+    monkeypatch.setattr(h.queue, "bin_draft", broken)
+    await h.tap()
+    assert h.bot.sent == [FAILED_TEXT]
+    assert h.store.get(h.draft.id).status == STATUS_BINNED
+    assert h.bot.edits == []  # buttons stay so Bin can be tapped again
+    monkeypatch.setattr(h.queue, "bin_draft", real)
+    await h.tap()
+    assert h.bot.sent[-1] == BINNED_TEXT
+    nxt = h.queue.pick("9")
+    assert nxt is not None
+    assert nxt.text == "First seed"
+    await h.tap()
+    assert h.bot.sent[-1] == ALREADY_HANDLED_TEXT
 
 
 async def test_binning_an_already_published_draft_leaves_the_seed_alone(
