@@ -79,3 +79,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [SEC-13] Model-generated text written to a line-based file is checked as printable single-line text, rejecting every control character, not just newlines (from PR #16, 2026-11-18)
 - [ERR-13] Blocking waits (file locks, sleeps) inside async code are offloaded with `asyncio.to_thread`, so they cannot stall the shared event loop (from PR #17, 2026-11-18)
 - [ERR-14] A function that documents a typed error wraps every OSError path it can hit (directory creation, open, write), not just its main operation (from PR #18, 2026-11-18)
+- [SEC-14] Handlers that act on stored per-chat state compare the update's chat with the chat that state belongs to, even behind the global chat guard (from PR #20, 2026-11-18)
