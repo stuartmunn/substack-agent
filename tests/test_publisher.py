@@ -203,6 +203,10 @@ async def test_startup_hook_runs_when_the_bot_starts(
     async with asyncio.timeout(5):
         await started.wait()
     assert sender_seen[0] is not None
+    # A hook that never returns (the daily monitor loop) must not block the bot:
+    # polling is already running and the bot task is still live.
+    updater.start_polling.assert_awaited_once()
+    assert not task.done()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
