@@ -432,3 +432,11 @@ async def test_a_second_tap_after_a_failed_status_write_does_not_republish(
     await h.tap()
     assert len(h.publisher.calls) == 1
     assert h.bot.sent[-1] == ALREADY_HANDLED_TEXT
+
+
+async def test_the_published_memory_is_pruned_once_the_store_records_it(
+    h: Harness,
+) -> None:
+    """PR-Agent: the in-memory set only keeps drafts whose status write failed."""
+    await h.tap()
+    assert h.service._published == set()

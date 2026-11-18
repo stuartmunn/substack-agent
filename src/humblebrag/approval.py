@@ -106,6 +106,7 @@ class ApproveService:
         problems: list[str] = []
         try:
             await asyncio.to_thread(self._store.mark_published, draft_id, url)
+            self._published.discard(draft_id)  # the store now records it
         except Exception as error:  # the post is already live
             logger.exception("Marking draft %d published failed", draft_id)
             problems.append(
