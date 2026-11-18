@@ -16,6 +16,7 @@ DEFAULT_RUN_TIME = "08:30"
 DEFAULT_TZ = "Europe/London"
 DEFAULT_MIN_POST_WORDS = 250
 DEFAULT_MAX_POST_WORDS = 600
+DEFAULT_MAX_PENDING_DRAFTS = 7
 EXIT_CONFIG_ERROR = 1
 
 
@@ -40,6 +41,7 @@ class Config:
     tz: ZoneInfo
     min_post_words: int = DEFAULT_MIN_POST_WORDS
     max_post_words: int = DEFAULT_MAX_POST_WORDS
+    max_pending_drafts: int = DEFAULT_MAX_PENDING_DRAFTS
 
 
 def _read_value(env: Mapping[str, str], name: str) -> str | None:
@@ -92,8 +94,8 @@ def _parse_chat_id(text: str) -> int:
         raise ConfigError("TELEGRAM_CHAT_ID must be an integer") from None
 
 
-def _parse_word_limit(env: Mapping[str, str], name: str, default: int) -> int:
-    """Parse an optional positive integer word limit."""
+def _parse_positive_int(env: Mapping[str, str], name: str, default: int) -> int:
+    """Parse an optional positive integer setting."""
     text = _read_value(env, name)
     if text is None:
         return default
@@ -118,8 +120,8 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     cookie = _require(source, "SUBSTACK_COOKIE", missing)
     if missing:
         raise ConfigError("Missing required config: " + ", ".join(missing))
-    min_words = _parse_word_limit(source, "POST_MIN_WORDS", DEFAULT_MIN_POST_WORDS)
-    max_words = _parse_word_limit(source, "POST_MAX_WORDS", DEFAULT_MAX_POST_WORDS)
+    min_words = _parse_positive_int(source, "POST_MIN_WORDS", DEFAULT_MIN_POST_WORDS)
+    max_words = _parse_positive_int(source, "POST_MAX_WORDS", DEFAULT_MAX_POST_WORDS)
     if min_words > max_words:
         raise ConfigError("POST_MIN_WORDS must not exceed POST_MAX_WORDS")
     return Config(
@@ -133,6 +135,9 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         tz=_parse_tz(_read_value(source, "TZ") or DEFAULT_TZ),
         min_post_words=min_words,
         max_post_words=max_words,
+        max_pending_drafts=_parse_positive_int(
+            source, "MAX_PENDING_DRAFTS", DEFAULT_MAX_PENDING_DRAFTS
+        ),
     )
 
 
