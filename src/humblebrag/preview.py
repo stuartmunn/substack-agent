@@ -5,7 +5,7 @@ import logging
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
-from humblebrag.drafts import Draft
+from humblebrag.drafts import MAX_REDOS, Draft
 
 logger = logging.getLogger(__name__)
 
@@ -42,15 +42,18 @@ def parse_callback_data(data: str | None) -> tuple[str, int] | None:
     return _ACTIONS_BY_CODE[code], int(raw_id)
 
 
-def preview_keyboard(draft_id: int) -> InlineKeyboardMarkup:
-    """The Approve / Redo / Bin buttons for one draft."""
+def preview_keyboard(draft_id: int, redo_allowed: bool = True) -> InlineKeyboardMarkup:
+    """The Approve / Redo / Bin buttons for one draft (no Redo once used up)."""
+    actions = [ACTION_APPROVE, ACTION_REDO, ACTION_BIN]
+    if not redo_allowed:
+        actions.remove(ACTION_REDO)
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton(
                     BUTTON_LABELS[action], callback_data=callback_data(action, draft_id)
                 )
-                for action in (ACTION_APPROVE, ACTION_REDO, ACTION_BIN)
+                for action in actions
             ]
         ]
     )
@@ -117,5 +120,9 @@ async def send_preview(
         await bot.send_message(
             chat_id=chat_id,
             text=chunk,
-            reply_markup=preview_keyboard(draft.id) if is_last else None,
+            reply_markup=(
+                preview_keyboard(draft.id, draft.redo_count < MAX_REDOS)
+                if is_last
+                else None
+            ),
         )

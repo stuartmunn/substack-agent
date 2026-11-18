@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_DB_PATH = Path("/data/humblebrag.db")
 BUSY_TIMEOUT_SECONDS = 5.0
 UNLIMITED_PENDING = 2**62
+MAX_REDOS = 3
 STATUS_PENDING = "pending"
 STATUS_PUBLISHED = "published"
 STATUS_BINNED = "binned"
@@ -62,6 +63,10 @@ class DraftStateError(DraftError):
 
 class PendingCapReachedError(DraftError):
     """Creating the draft would exceed the pending cap; nothing was stored."""
+
+
+class RedoLimitReachedError(DraftError):
+    """The draft has used all its redos."""
 
 
 class DraftStoreError(DraftError):
@@ -179,6 +184,47 @@ class DraftStore:
     def mark_binned(self, draft_id: int) -> Draft:
         """Resolve a pending draft as binned."""
         return self._resolve(draft_id, STATUS_BINNED, None)
+
+    def apply_redo(
+        self,
+        draft_id: int,
+        title: str,
+        subtitle: str,
+        body: str,
+        steer: str | None,
+    ) -> Draft:
+        """Replace a pending draft's content, count the redo and log the steer.
+
+        One transaction checks the draft is pending and has redos left, so two
+        racing redos cannot exceed ``MAX_REDOS``. Raises DraftNotFoundError,
+        DraftStateError or RedoLimitReachedError.
+        """
+        try:
+            with closing(self._connect()) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT status, redo_count, steer_history FROM drafts WHERE id = ?",
+                    (draft_id,),
+                ).fetchone()
+                if row is None:
+                    raise DraftNotFoundError(f"No draft with id {draft_id}")
+                status, redo_count, raw_history = row
+                if status != STATUS_PENDING:
+                    raise DraftStateError(f"Draft {draft_id} is already {status}")
+                if redo_count >= MAX_REDOS:
+                    raise RedoLimitReachedError(f"Draft {draft_id} has no redos left")
+                history = json.loads(raw_history) + ([steer] if steer else [])
+                connection.execute(
+                    "UPDATE drafts SET title = ?, subtitle = ?, body = ?,"
+                    " redo_count = redo_count + 1, steer_history = ? WHERE id = ?",
+                    (title, subtitle, body, json.dumps(history), draft_id),
+                )
+                connection.commit()
+        except sqlite3.Error as error:
+            raise DraftStoreError(
+                f"Draft database error: {type(error).__name__}"
+            ) from None
+        return self.get(draft_id)
 
     def _resolve(self, draft_id: int, status: str, url: str | None) -> Draft:
         """Move a pending draft to ``status``, atomically checking it is pending."""
