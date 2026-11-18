@@ -5,7 +5,7 @@ import logging
 import signal
 import sys
 
-from humblebrag.alerts import send_standalone_alert
+from humblebrag.alerts import describe_error, send_standalone_alert
 from humblebrag.bot import run_bot
 from humblebrag.config import Config, load_config_or_exit
 from humblebrag.heartbeat import heartbeat_loop
@@ -23,13 +23,6 @@ def _secret_values(config: Config) -> list[str]:
         config.anthropic_api_key,
         config.substack_cookie,
     ]
-
-
-def describe_error(error: BaseException) -> str:
-    """Describe ``error``, unwrapping exception groups to their leaf errors."""
-    if isinstance(error, BaseExceptionGroup):
-        return "; ".join(describe_error(inner) for inner in error.exceptions)
-    return f"{type(error).__name__}: {error}"
 
 
 def _request_stop(tasks: list[asyncio.Task[None]]) -> None:
