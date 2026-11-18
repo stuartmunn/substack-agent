@@ -116,7 +116,15 @@ class ApproveService:
                 f"the seed of draft {draft_id} was not marked used: "
                 f"{describe_error(error)}"
             )
-        await self._say(context, chat_id, PUBLISHED_TEXT.format(url=url))
+        try:
+            await self._say(context, chat_id, PUBLISHED_TEXT.format(url=url))
+        except Exception as error:  # the post is live: the URL must still reach Stuart
+            logger.exception(
+                "Could not send the published reply for draft %d", draft_id
+            )
+            problems.append(
+                f"the reply to you could not be sent: {describe_error(error)}"
+            )
         if problems:
             await alert(ALERT_EVENT, f"Published {url} but " + "; and ".join(problems))
 

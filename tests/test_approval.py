@@ -399,3 +399,20 @@ def test_install_registers_the_approve_action() -> None:
     service = ApproveService(None, None, None)  # type: ignore[arg-type]
     install_approve(application, service)  # type: ignore[arg-type]
     assert application.bot_data[ACTIONS_KEY][ACTION_APPROVE] == service.on_approve_tap
+
+
+async def test_a_failed_published_reply_still_alerts_with_the_url_and_clears_buttons(
+    h: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR-Agent: if the URL reply cannot be sent, alert with the URL; no crash."""
+
+    async def broken(**_kwargs: Any) -> None:
+        raise RuntimeError("telegram down")
+
+    monkeypatch.setattr(h.bot, "send_message", broken)
+    await h.tap()
+    assert h.status() == STATUS_PUBLISHED
+    assert len(alerts) == 1
+    assert URL in alerts[0]
+    assert "reply to you could not be sent" in alerts[0]
+    assert len(h.bot.edits) == 1
