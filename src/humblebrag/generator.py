@@ -63,6 +63,12 @@ def _build_prompt(
     return "\n\n".join(parts)
 
 
+def _repeats_title(body: str, title: str) -> bool:
+    """True if the body's first line is just the title (optionally a heading)."""
+    first_line = body.lstrip().split("\n", 1)[0].lstrip("#").strip()
+    return first_line.casefold() == title.casefold()
+
+
 def _parse_post(reply: str, min_words: int, max_words: int) -> GeneratedPost:
     """Validate the model's reply as a post, or raise MalformedPostError."""
     stripped = reply.strip()
@@ -81,6 +87,8 @@ def _parse_post(reply: str, min_words: int, max_words: int) -> GeneratedPost:
             raise MalformedPostError(f"{name} is missing or not a non-empty string")
         values[name] = value.strip()
     body = values["body_markdown"]
+    if _repeats_title(body, values["title"]):
+        raise MalformedPostError("body_markdown repeats the title")
     if _IMAGE.search(body):
         raise MalformedPostError("body_markdown contains an image")
     if _LINK.search(body):

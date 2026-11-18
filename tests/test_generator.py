@@ -243,3 +243,23 @@ async def test_footnote_style_text_is_not_a_link(footnote: str) -> None:
     post = await _generator(client).generate(SEED)
     assert len(client.calls) == 1
     assert post.body_markdown.endswith(footnote.strip())
+
+
+@pytest.mark.parametrize(
+    "opening", ["# Coffee, Leadership and Me", "coffee, leadership and me"]
+)
+async def test_body_repeating_the_title_is_rejected(opening: str) -> None:
+    """The prompt forbids repeating the title, so a repeat is malformed."""
+    repeated = _reply(body_markdown=f"{opening}\n\n{_body(300)}")
+    client = StubClient([repeated, _reply()])
+    post = await _generator(client).generate(SEED)
+    assert "title" in client.calls[1]["prompt"]
+    assert post.body_markdown == _body(300)
+
+
+async def test_title_words_inside_the_body_are_fine() -> None:
+    """Near-miss: mentioning the title in a longer line is not a repeat."""
+    body = "Coffee, Leadership and Me is my favourite " + _body(300)
+    client = StubClient([_reply(body_markdown=body)])
+    await _generator(client).generate(SEED)
+    assert len(client.calls) == 1
