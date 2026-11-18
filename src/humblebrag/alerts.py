@@ -36,6 +36,13 @@ def telegram_sender(bot: Bot, chat_id: int) -> Sender:
     return send
 
 
+def describe_error(error: BaseException) -> str:
+    """Describe ``error``, unwrapping exception groups to their leaf errors."""
+    if isinstance(error, BaseExceptionGroup):
+        return "; ".join(describe_error(inner) for inner in error.exceptions)
+    return f"{type(error).__name__}: {error}"
+
+
 def format_alert(event: str, detail: str) -> str:
     """Build the alert text: prefix, failed step, redacted detail, length-capped."""
     text = redactor.redact(f"{ALERT_PREFIX} {event}: {detail}")
