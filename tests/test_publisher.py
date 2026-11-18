@@ -415,3 +415,17 @@ def test_real_api_network_error_is_not_an_expiry(wire: Wire) -> None:
     with pytest.raises(SubstackError) as raised:
         SubstackPublisher(_config()).check_session()
     assert not isinstance(raised.value, SubstackAuthError)
+
+
+async def test_a_failing_startup_hook_is_alerted_not_lost(
+    monkeypatch: pytest.MonkeyPatch, alerts: list[str]
+) -> None:
+    """PR-Agent: a startup hook that raises (even before shutdown) alerts Stuart."""
+    from humblebrag import bot
+
+    async def broken() -> None:
+        raise RuntimeError("hook exploded")
+
+    await bot._run_startup(broken)
+    assert len(alerts) == 1
+    assert "Startup task failed: RuntimeError: hook exploded" in alerts[0]

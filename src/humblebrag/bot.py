@@ -16,7 +16,7 @@ from telegram.ext import (
     TypeHandler,
 )
 
-from humblebrag.alerts import configure_alerts, telegram_sender
+from humblebrag.alerts import alert, configure_alerts, describe_error, telegram_sender
 from humblebrag.buttons import STORE_KEY, handle_button
 from humblebrag.config import Config
 from humblebrag.drafts import DraftStore
@@ -97,6 +97,15 @@ def build_application(config: Config, store: DraftStore | None = None) -> Applic
     return application
 
 
+async def _run_startup(on_started: Callable[[], Awaitable[object]]) -> None:
+    """Run the startup hook; a failure is logged and alerted, never lost."""
+    try:
+        await on_started()
+    except Exception as error:  # the task is never awaited until shutdown
+        logger.exception("Startup task failed")
+        await alert("startup", f"Startup task failed: {describe_error(error)}")
+
+
 async def run_bot(
     config: Config, on_started: Callable[[], Awaitable[object]] | None = None
 ) -> None:
@@ -114,7 +123,7 @@ async def run_bot(
             configure_alerts(telegram_sender(application.bot, config.telegram_chat_id))
             logger.info("Telegram bot polling")
             if on_started is not None:
-                startup_task = asyncio.create_task(on_started())
+                startup_task = asyncio.create_task(_run_startup(on_started))
             await asyncio.Event().wait()
         finally:
             if startup_task is not None and not startup_task.done():
