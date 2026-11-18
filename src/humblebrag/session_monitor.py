@@ -123,8 +123,14 @@ class SessionMonitor:
         """Count a check made just now (at startup) as today's, if it is past
         the check time, so the monitor does not alert a second time."""
         today = self._today_if_due()
-        if today is not None:
+        if today is None:
+            return
+        try:
             await asyncio.to_thread(self._state.claim, today)
+        except MonitorStateError:
+            # Not fatal: run_forever hits the same fault on its first tick and
+            # alerts once, so the daily loop must still start.
+            logger.exception("Could not record the startup session check")
 
     async def run_forever(self) -> None:
         """Tick every ``POLL_INTERVAL_SECONDS`` until cancelled.

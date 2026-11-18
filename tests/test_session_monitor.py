@@ -324,3 +324,14 @@ def test_main_wires_the_monitor_into_the_bot_startup() -> None:
     ).read_text()
     assert "monitor.run_forever()" in source
     assert "SessionMonitor(" in source
+
+
+async def test_a_bad_state_file_at_startup_does_not_stop_the_monitor(
+    h: Harness, alerts: list[str]
+) -> None:
+    """PR-Agent: mark_checked_if_due swallows state errors so the loop starts."""
+    h.state_path.write_text("not json")
+    h.at(9)
+    await h.monitor.mark_checked_if_due()  # must not raise
+    with pytest.raises(MonitorStateError):
+        await h.monitor.tick()  # the loop reports this one (alerted once there)
