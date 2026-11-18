@@ -1,12 +1,12 @@
 """Turns a seed (plus an optional steer) into a structured post via Claude."""
 
-import json
 import logging
 import re
 from dataclasses import dataclass
 
 from humblebrag.claude_client import ClaudeClient
 from humblebrag.config import Config
+from humblebrag.json_reply import JsonReplyError, parse_json_object
 from humblebrag.persona import Persona
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,6 @@ MIN_GENERATION_TOKENS = 4096
 TOKENS_PER_WORD_ALLOWANCE = 3
 JSON_OVERHEAD_TOKENS = 512
 REQUIRED_FIELDS = ("title", "subtitle", "body_markdown")
-_FENCE = re.compile(r"\A```(?:json)?\s*(?P<inner>.*?)\s*```\Z", re.DOTALL)
 _LINK = re.compile(
     r"\[[^\]]*\]\([^)]*\)|^\s*\[[^\]]+\]:\s*\S+\s*(?:[\"'(].*)?$|https?://|www\.|<a\b",
     re.IGNORECASE | re.MULTILINE,
@@ -71,15 +70,10 @@ def _repeats_title(body: str, title: str) -> bool:
 
 def _parse_post(reply: str, min_words: int, max_words: int) -> GeneratedPost:
     """Validate the model's reply as a post, or raise MalformedPostError."""
-    stripped = reply.strip()
-    fenced = _FENCE.match(stripped)
-    text = fenced["inner"] if fenced else stripped
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        raise MalformedPostError("reply is not valid JSON") from None
-    if not isinstance(data, dict):
-        raise MalformedPostError("reply is not a JSON object")
+        data = parse_json_object(reply)
+    except JsonReplyError as error:
+        raise MalformedPostError(str(error)) from None
     values: dict[str, str] = {}
     for name in REQUIRED_FIELDS:
         value = data.get(name)
