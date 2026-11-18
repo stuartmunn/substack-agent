@@ -75,6 +75,11 @@ def parse_seed_line(line: str, line_index: int = 0) -> Seed | None:
     return Seed(line_index, text, checked, used_date, generated)
 
 
+def seed_key(text: str) -> str:
+    """Normalise seed text for duplicate checks: case-insensitive, spaces collapsed."""
+    return " ".join(text.split()).casefold()
+
+
 def format_seed_line(text: str, used_on: date | None, generated: bool) -> str:
     """Build the canonical line for a seed."""
     parts = [f"- [{'x' if used_on else ' '}] {text}"]

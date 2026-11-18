@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
 
-from humblebrag.seed import Seed, SeedFile, write_atomically
+from humblebrag.seed import Seed, SeedFile, seed_key, write_atomically
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,26 @@ class SeedQueue:
             del reservations[draft_id]
             self._save_reservations(reservations)
             return True
+
+    def seed_texts(self) -> list[str]:
+        """Every seed's text (used or not), in file order."""
+        return [seed.text for seed in SeedFile.load(self._seed_path).seeds]
+
+    def add_generated(self, text: str, draft_id: str) -> Seed | None:
+        """Append ``text`` as a ``(generated)`` seed and reserve one for the draft.
+
+        Duplicates are matched case-insensitively against every seed, used or
+        not, and return None without changing anything. Appending and reserving
+        happen under one lock, so no other draft can take the new seed first.
+        """
+        with self._locked():
+            seed_file = SeedFile.load(self._seed_path)
+            known = {seed_key(seed.text) for seed in seed_file.seeds}
+            if seed_key(text) in known:
+                return None
+            seed_file.append_seed(text, generated=True)
+            seed_file.save()
+            return self._pick_locked(draft_id)
 
     def _pick_locked(self, draft_id: str) -> Seed | None:
         """The body of ``pick``; the caller holds the lock."""
