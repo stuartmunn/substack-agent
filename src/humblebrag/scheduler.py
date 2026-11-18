@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 
 from humblebrag.alerts import alert, describe_error
 from humblebrag.config import Config
-from humblebrag.file_lock import LockTimeoutError, file_lock
+from humblebrag.file_lock import file_lock
 from humblebrag.seed import write_atomically
 
 logger = logging.getLogger(__name__)
@@ -175,7 +175,8 @@ class Scheduler:
         while True:
             try:
                 await self.tick()
-            except (SchedulerStateError, LockTimeoutError, OSError) as error:
+            except Exception as error:  # one bad tick must not stop the scheduler
+                logger.exception("Scheduler tick failed")
                 await self._report(describe_error(error))
             else:
                 self._last_error = None
@@ -190,8 +191,7 @@ class Scheduler:
             await alert(ALERT_EVENT, f"Daily run failed: {describe_error(error)}")
 
     async def _report(self, description: str) -> None:
-        """Log and alert a scheduler failure, once per distinct description."""
-        logger.error("Scheduler tick failed: %s", description)
+        """Alert a scheduler failure, once per distinct description."""
         if description != self._last_error:
             self._last_error = description
             await alert(

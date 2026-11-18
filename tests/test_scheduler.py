@@ -357,6 +357,28 @@ async def test_corrupt_state_alerts_once_not_every_poll(
     assert "scheduler-state.json" in alerts[0]
 
 
+async def test_an_unexpected_tick_error_alerts_and_the_loop_survives(
+    tmp_path: Path, alerts: list[str]
+) -> None:
+    """ERR-07: any error in a tick is alerted, and later ticks still run."""
+    scheduler, pipeline, clock, _ = _build(tmp_path, _utc(2026, 1, 15, 9, 0))
+    calls = 0
+    real_now = clock.now
+
+    def flaky_clock() -> datetime:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("clock exploded")
+        return real_now
+
+    scheduler._clock = flaky_clock
+    await _ticks(scheduler, 2)
+    assert len(alerts) == 1
+    assert "RuntimeError: clock exploded" in alerts[0]
+    assert pipeline.runs == 1
+
+
 async def test_a_recovered_error_alerts_again_if_it_returns(
     tmp_path: Path, alerts: list[str]
 ) -> None:
