@@ -456,3 +456,17 @@ async def test_overlapping_checks_never_run_at_the_same_time() -> None:
     publisher = SubstackPublisher(_config(), factory)
     await asyncio.gather(publisher.ensure_session(), publisher.ensure_session())
     assert peak == 1
+
+
+async def test_failure_details_are_logged_without_the_cookie(
+    alerts: list[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    """PR-Agent: operators can see the real cause in the log; no secret in it."""
+    error = SubstackAPIException(503, f"upstream down while using {SECRET}")
+    publisher = SubstackPublisher(_config(), _failing(error))
+    with caplog.at_level(logging.WARNING), pytest.raises(SubstackError):
+        await publisher.ensure_session()
+    assert "SubstackAPIException" in caplog.text
+    assert "503" in caplog.text
+    assert "upstream down" in caplog.text
+    assert "SUPER-SECRET" not in caplog.text

@@ -98,19 +98,31 @@ class SubstackPublisher:
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
         except SubstackAPIException as error:
+            self._log_failure(error)
             if error.status_code in AUTH_STATUS_CODES:
                 raise SubstackAuthError(SESSION_EXPIRED_MESSAGE) from None
             raise SubstackError(
                 f"Substack returned HTTP {error.status_code} during the session check"
             ) from None
         except SubstackRequestException as error:
+            self._log_failure(error)
             if error.message.startswith(_NO_PUBLICATION_MARKERS):
                 raise SubstackAuthError(SESSION_EXPIRED_MESSAGE) from None
             raise SubstackError("Substack gave an unusable reply") from None
         except requests.RequestException as error:
+            self._log_failure(error)
             raise SubstackError(
                 f"Substack could not be reached ({type(error).__name__})"
             ) from None
+
+    @staticmethod
+    def _log_failure(error: Exception) -> None:
+        """Log the library's own description (its cookie-like values are redacted
+        by the library and by the log redactor). The chain is cut with
+        ``from None`` so no traceback can carry request headers."""
+        logger.warning(
+            "Substack session check failed: %s: %s", type(error).__name__, error
+        )
 
     async def ensure_session(self) -> None:
         """Check the session off the event loop; on failure alert Stuart, re-raise."""

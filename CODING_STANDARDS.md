@@ -84,3 +84,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [ERR-16] Background tasks started at startup are wrapped so an exception is logged and alerted at once; never rely on awaiting the task at shutdown to surface it (from PR #22, 2026-11-18)
 - [SEC-15] Parsing a secret of unknown shape must not guess from characters a real value can contain (e.g. base64 "="); match known names or explicit delimiters (from PR #22, 2026-11-18)
 - [CON-01] State mutated from worker threads (asyncio.to_thread) is guarded by a lock so overlapping calls cannot interleave (from PR #22, 2026-11-18)
+- [ERR-17] When a library error is translated into a typed error with "from None" (to keep secrets out of tracebacks), log the original error type and message first so the cause is not lost (from PR #22, 2026-11-18)
