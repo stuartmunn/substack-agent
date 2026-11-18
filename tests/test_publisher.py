@@ -500,3 +500,25 @@ def test_a_recheck_never_exposes_a_missing_session() -> None:
     publisher.check_session()
     assert seen == [first]
     assert publisher.api is not first
+
+
+def test_compose_grace_period_outlasts_a_session_check_in_flight() -> None:
+    """PR-Agent: docker stop waits longer than the Substack request timeout."""
+    root = Path(__file__).resolve().parent.parent
+    text = (root / "docker-compose.yml").read_text()
+    match = re.search(r"stop_grace_period:\s*(\d+)s", text)
+    assert match is not None
+    assert int(match.group(1)) > REQUEST_TIMEOUT_SECONDS
+
+
+@pytest.mark.parametrize("message", [None, 5])
+async def test_an_odd_exception_message_is_still_a_typed_error(
+    alerts: list[str], message: object
+) -> None:
+    """PR-Agent: a non-string message cannot escape as an AttributeError."""
+    error = SubstackRequestException("x")
+    error.message = message  # type: ignore[assignment]
+    publisher = SubstackPublisher(_config(), _failing(error))
+    with pytest.raises(SubstackError):
+        await publisher.ensure_session()
+    assert len(alerts) == 1

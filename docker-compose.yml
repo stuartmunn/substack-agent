@@ -2,6 +2,8 @@ services:
   humblebrag:
     build: .
     restart: unless-stopped
+    # A Substack check in flight can take up to 30s to time out; let it finish.
+    stop_grace_period: 45s
     environment:
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:?set TELEGRAM_CHAT_ID in .env}
       CLAUDE_MODEL: ${CLAUDE_MODEL:?set CLAUDE_MODEL in .env}

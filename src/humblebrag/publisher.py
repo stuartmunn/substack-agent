@@ -110,7 +110,7 @@ class SubstackPublisher:
             ) from None
         except SubstackRequestException as error:
             self._log_failure(error)
-            if error.message.startswith(_NO_PUBLICATION_MARKERS):
+            if str(error.message or "").startswith(_NO_PUBLICATION_MARKERS):
                 raise SubstackAuthError(SESSION_EXPIRED_MESSAGE) from None
             raise SubstackError("Substack gave an unusable reply") from None
         except requests.RequestException as error:
