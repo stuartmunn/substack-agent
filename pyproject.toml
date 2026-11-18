@@ -3,7 +3,11 @@ name = "humblebrag"
 version = "0.0.0"
 description = "Sir Humblebrag III: a daily parody Substack post agent"
 requires-python = ">=3.12"
-dependencies = ["anthropic==2.10.0", "python-telegram-bot==22.8"]
+dependencies = [
+    "anthropic==2.10.0",
+    "python-substack==0.10.0",
+    "python-telegram-bot==22.8",
+]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "pyyaml==6.0.2", "pytest-asyncio==1.5.0"]

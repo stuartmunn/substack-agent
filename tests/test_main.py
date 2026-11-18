@@ -59,7 +59,7 @@ def test_main_runs_heartbeat_and_never_logs_secrets(
         ran.append(True)
         logging.getLogger("humblebrag.test").info("leak check %s", "tok-SECRET")
 
-    async def fake_run_bot(config: Config) -> None:
+    async def fake_run_bot(config: Config, **_kwargs: object) -> None:
         ran.append(True)
 
     monkeypatch.setattr(entrypoint, "heartbeat_loop", fake_heartbeat_loop)
@@ -76,7 +76,7 @@ def test_sigterm_stops_the_loop_cleanly(
 ) -> None:
     """SIGTERM (docker stop) ends the run loop gracefully instead of hanging."""
 
-    async def forever(*_args: Config) -> None:
+    async def forever(*_args: Config, **_kwargs: object) -> None:
         await asyncio.sleep(3600)
 
     async def run() -> None:
@@ -172,7 +172,7 @@ def test_real_task_group_failure_alerts_with_the_underlying_error(
         monkeypatch.setenv(name, value)
     details: list[str] = []
 
-    async def failing_bot(_config: Config) -> None:
+    async def failing_bot(_config: Config, **_kwargs: object) -> None:
         raise InvalidTokenError("token was rejected")
 
     async def idle_heartbeat() -> None:

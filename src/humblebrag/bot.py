@@ -1,7 +1,9 @@
 """Telegram bot skeleton: long polling, locked to a single chat."""
 
 import asyncio
+import contextlib
 import logging
+from collections.abc import Awaitable, Callable
 
 from telegram import Update
 from telegram.ext import (
@@ -14,7 +16,7 @@ from telegram.ext import (
     TypeHandler,
 )
 
-from humblebrag.alerts import configure_alerts, telegram_sender
+from humblebrag.alerts import alert, configure_alerts, describe_error, telegram_sender
 from humblebrag.buttons import STORE_KEY, handle_button
 from humblebrag.config import Config
 from humblebrag.drafts import DraftStore
@@ -95,17 +97,39 @@ def build_application(config: Config, store: DraftStore | None = None) -> Applic
     return application
 
 
-async def run_bot(config: Config) -> None:
-    """Run the bot with long polling (no inbound port) until cancelled."""
+async def _run_startup(on_started: Callable[[], Awaitable[object]]) -> None:
+    """Run the startup hook; a failure is logged and alerted, never lost."""
+    try:
+        await on_started()
+    except Exception as error:  # the task is never awaited until shutdown
+        logger.exception("Startup task failed")
+        await alert("startup", f"Startup task failed: {describe_error(error)}")
+
+
+async def run_bot(
+    config: Config, on_started: Callable[[], Awaitable[object]] | None = None
+) -> None:
+    """Run the bot with long polling (no inbound port) until cancelled.
+
+    ``on_started`` runs once as a background task after polling has started and
+    alerts work, e.g. the Substack session check. It is cancelled on shutdown.
+    """
     application = build_application(config)
+    startup_task: asyncio.Task[object] | None = None
     async with application:
         try:
             await application.start()
             await application.updater.start_polling(timeout=POLL_TIMEOUT_SECONDS)
             configure_alerts(telegram_sender(application.bot, config.telegram_chat_id))
             logger.info("Telegram bot polling")
+            if on_started is not None:
+                startup_task = asyncio.create_task(_run_startup(on_started))
             await asyncio.Event().wait()
         finally:
+            if startup_task is not None and not startup_task.done():
+                startup_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await startup_task
             configure_alerts(None)
             if application.updater.running:
                 await application.updater.stop()
