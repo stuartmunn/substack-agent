@@ -127,6 +127,9 @@ def test_api_is_built_with_the_cookie_the_publication_and_a_timeout() -> None:
         ("  s:bare  ", "substack.sid=s:bare"),
         ("substack.sid=abc; substack.lli=1", "substack.sid=abc; substack.lli=1"),
         ("connect.sid=abc", "connect.sid=abc"),
+        ("abc123=", "substack.sid=abc123="),
+        ("abc123==", "substack.sid=abc123=="),
+        ("a=b; c=d", "a=b; c=d"),
     ],
 )
 def test_cookie_secret_may_be_bare_or_a_full_cookie_string(

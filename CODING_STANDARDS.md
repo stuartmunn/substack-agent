@@ -82,3 +82,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [SEC-14] Handlers that act on stored per-chat state compare the update's chat with the chat that state belongs to, even behind the global chat guard (from PR #20, 2026-11-18)
 - [ERR-15] Best-effort cleanup after a completed action (removing buttons, deleting temp messages) catches broadly and logs, and runs after the user-facing confirmation, so it can never hide success (from PR #21, 2026-11-18)
 - [ERR-16] Background tasks started at startup are wrapped so an exception is logged and alerted at once; never rely on awaiting the task at shutdown to surface it (from PR #22, 2026-11-18)
+- [SEC-15] Parsing a secret of unknown shape must not guess from characters a real value can contain (e.g. base64 "="); match known names or explicit delimiters (from PR #22, 2026-11-18)

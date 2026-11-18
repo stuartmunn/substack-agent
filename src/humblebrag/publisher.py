@@ -34,7 +34,7 @@ _NO_PUBLICATION_MARKERS = (
     "Requested publication is unavailable",
     "Could not find primary publication",
 )
-_COOKIE_PAIR = re.compile(r"^[\w.\-]+=")
+_KNOWN_COOKIE = re.compile(r"^(substack\.sid|connect\.sid|substack\.lli)=")
 
 ApiFactory = Callable[..., Any]
 
@@ -51,10 +51,10 @@ def cookie_string(secret: str) -> str:
     """Return the cookie as ``name=value`` pairs.
 
     The secret may be the full ``name=value; ...`` string copied from the
-    browser, or just the bare ``substack.sid`` value.
+    browser, or just the bare ``substack.sid`` value (which may end in ``=``).
     """
     value = secret.strip()
-    if _COOKIE_PAIR.match(value):
+    if ";" in value or _KNOWN_COOKIE.match(value):
         return value
     return f"{SESSION_COOKIE_NAME}={value}"
 
