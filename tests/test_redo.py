@@ -236,6 +236,34 @@ async def test_text_with_nothing_pending_is_ignored(h: Harness) -> None:
     assert h.bot.sent == []
 
 
+async def test_text_from_another_chat_is_not_taken_as_the_steer(h: Harness) -> None:
+    """SEC-14: a reply must come from the chat that tapped Redo."""
+    await h.tap()
+    stranger = SimpleNamespace(
+        effective_chat=SimpleNamespace(id=CHAT + 1),
+        effective_message=SimpleNamespace(text="hijack"),
+    )
+    await h.service.on_text(stranger, _context(h.bot))
+    await h.service.on_nosteer(stranger, _context(h.bot))
+    assert h.regen.calls == []
+    assert h.service._pending is not None
+    assert h.bot.sent[-1]["chat_id"] == CHAT + 1
+    assert h.bot.sent[-1]["text"] == NOTHING_PENDING_TEXT
+    h.service._pending.timeout_task.cancel()
+
+
+async def test_updates_without_a_chat_are_ignored(h: Harness) -> None:
+    """Updates with no chat neither start a redo nor raise."""
+    await h.tap()
+    nochat = SimpleNamespace(
+        effective_chat=None, effective_message=SimpleNamespace(text="x")
+    )
+    await h.service.on_text(nochat, _context(h.bot))
+    await h.service.on_nosteer(nochat, _context(h.bot))
+    assert h.regen.calls == []
+    h.service._pending.timeout_task.cancel()
+
+
 async def test_nosteer_with_nothing_pending_says_so(h: Harness) -> None:
     """/nosteer outside a redo gets a clear reply."""
     await h.nosteer()
@@ -302,13 +330,15 @@ def test_store_refuses_a_fourth_redo(tmp_path: Path) -> None:
 
 
 def test_store_refuses_a_redo_on_a_resolved_draft(tmp_path: Path) -> None:
-    """A binned draft cannot be redone."""
+    """A binned draft cannot be redone, and the refusal releases the write lock."""
     store = DraftStore(tmp_path / "d.db")
     draft = store.create("s", "T", "S", "B")
     store.mark_binned(draft.id)
     with pytest.raises(DraftStateError):
         store.apply_redo(draft.id, "T2", "S", "B", None)
     assert store.get(draft.id).title == "T"
+    other = store.create("s2", "T2", "S2", "B2")  # would block if a lock leaked
+    assert other.id == draft.id + 1
 
 
 # AC4: 30 minutes without a reply
@@ -462,6 +492,14 @@ async def test_install_redo_wires_tap_reply_and_nosteer(
     regen = Regenerator()
     application = bot_module.build_application(load_config(env), store)
     install_redo(application, RedoService(store, regen))
+    groups = {
+        group
+        for group, handlers in application.handlers.items()
+        for handler in handlers
+        if getattr(handler, "callback", None)
+        == application.bot_data["redo_service"].on_text
+    }
+    assert groups == {redo_module.STEER_GROUP}
     user = {"id": CHAT, "is_bot": False, "first_name": "S"}
     chat = {"id": CHAT, "type": "private"}
     tap = {

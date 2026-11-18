@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 STEER_TIMEOUT_SECONDS = 30 * 60
 SERVICE_KEY = "redo_service"
+STEER_GROUP = 1
 NOSTEER_COMMAND = "nosteer"
 ALERT_EVENT = "redo"
 STEER_PROMPT = "Steer? Reply with text, or /nosteer."
@@ -97,9 +98,10 @@ class RedoService:
     async def on_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Use a plain text message as the steer, if a redo is waiting for one."""
         message = update.effective_message
-        if message is None or not message.text:
+        chat = update.effective_chat
+        if message is None or not message.text or chat is None:
             return
-        if self._pending is None:
+        if self._pending is None or chat.id != self._pending.chat_id:
             return
         await self._start(context.bot, message.text.strip() or None)
 
@@ -107,10 +109,12 @@ class RedoService:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """/nosteer: redo with no steer."""
-        if self._pending is None or self._pending.started:
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id, text=NOTHING_PENDING_TEXT
-            )
+        chat = update.effective_chat
+        if chat is None:
+            return
+        pending = self._pending
+        if pending is None or pending.started or pending.chat_id != chat.id:
+            await context.bot.send_message(chat_id=chat.id, text=NOTHING_PENDING_TEXT)
             return
         await self._start(context.bot, None)
 
@@ -205,5 +209,6 @@ def install_redo(application: Application, service: RedoService) -> None:
     register_action(application, ACTION_REDO, service.on_redo_tap)
     application.add_handler(CommandHandler(NOSTEER_COMMAND, service.on_nosteer))
     application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, service.on_text)
+        MessageHandler(filters.TEXT & ~filters.COMMAND, service.on_text),
+        group=STEER_GROUP,
     )
