@@ -1,7 +1,8 @@
 """The only module that talks to python-substack (an unofficial API).
 
-SA-31 covers the session: cookie auth and ``check_session()``. Publishing is
-added behind this same class in SA-32, and always with ``send=False``.
+SA-31 covers the session (cookie auth, ``check_session()``); SA-32 adds
+``publish()``, which only ever publishes to the web: ``send`` is always False,
+so no email goes to subscribers.
 """
 
 import asyncio
@@ -28,6 +29,9 @@ RUNBOOK_URL = (
     "https://github.com/stuartmunn/substack-agent/blob/main/docs/runbook.md"
     "#refresh-the-substack-cookie"
 )
+PUBLISH_ALERT_EVENT = "substack publish"
+# Hard rule: never email subscribers. Not a parameter, not configurable.
+SEND_EMAIL = False
 SESSION_ALERT_EVENT = "substack session"
 CHECK_ALERT_EVENT = "substack"
 # Raised by python-substack when the cookie logs in as nobody or the wrong user.
@@ -42,6 +46,23 @@ ApiFactory = Callable[..., Any]
 
 class SubstackError(Exception):
     """A Substack call failed for a reason other than an expired session."""
+
+
+class PublishError(SubstackError):
+    """Publishing failed. Never retried automatically: the post may be live.
+
+    ``draft_id`` is the Substack draft that was created (if any) and may be left
+    orphaned; ``maybe_published`` is True when the publish call was made, so the
+    post could already be public and must be checked by hand before retrying.
+    """
+
+    def __init__(
+        self, message: str, draft_id: str | None, *, maybe_published: bool
+    ) -> None:
+        """Keep the draft id and whether the post may be live."""
+        super().__init__(message)
+        self.draft_id = draft_id
+        self.maybe_published = maybe_published
 
 
 class SubstackAuthError(SubstackError):
@@ -70,6 +91,7 @@ class SubstackPublisher:
         self._api_factory = api_factory
         self._api: Any | None = None
         self._lock = threading.Lock()
+        self._publish_lock = threading.Lock()
 
     @property
     def api(self) -> Any:
@@ -160,3 +182,76 @@ class SubstackPublisher:
             )
             return False
         return True
+
+    async def publish(self, title: str, subtitle: str, body_markdown: str) -> str:
+        """Publish to the web only and return the public URL.
+
+        Re-checks the session first. Any failure alerts Stuart, raises
+        ``PublishError`` and is never retried here, to avoid a double post.
+        """
+        await self.ensure_session()
+        try:
+            return await asyncio.to_thread(
+                self._publish_blocking, title, subtitle, body_markdown
+            )
+        except PublishError as error:
+            logger.error("Publishing failed: %s", error)
+            await alert(PUBLISH_ALERT_EVENT, str(error))
+            raise
+
+    def _publish_blocking(self, title: str, subtitle: str, body_markdown: str) -> str:
+        """Markdown -> draft -> prepublish -> publish(send=False). Blocking."""
+        with self._publish_lock:  # two publishes never overlap
+            api = self.api
+            draft_id: str | None = None
+            published_called = False
+            try:
+                draft = api.create_draft_from_markdown(
+                    title, body_markdown, subtitle=subtitle
+                )["draft"]
+                draft_id = str(draft["id"])
+                api.prepublish_draft(draft_id)
+                published_called = True
+                result = api.publish_draft(draft_id, send=SEND_EMAIL)
+                return self._public_url(result)
+            except Exception as error:
+                logger.exception("Substack publish failed")
+                raise self._publish_failure(
+                    draft_id, published_called, type(error).__name__
+                ) from None
+
+    def _public_url(self, result: Any) -> str:
+        """The post's public https URL from the publish reply."""
+        if isinstance(result, dict):
+            url = result.get("canonical_url")
+            if isinstance(url, str) and url.startswith("https://"):
+                return url
+            slug = result.get("slug")
+            if isinstance(slug, str) and slug:
+                return f"{self._publication_url.rstrip('/')}/p/{slug}"
+        raise ValueError("publish reply had no post URL")
+
+    @staticmethod
+    def _publish_failure(
+        draft_id: str | None, published_called: bool, error_name: str
+    ) -> PublishError:
+        """Describe a failure, logging any orphaned draft with its ID."""
+        if published_called:
+            note = (
+                f"Substack publish failed ({error_name}) after the publish call; "
+                f"the post may be live. Check Substack before retrying. "
+                f"Draft ID: {draft_id}"
+            )
+        elif draft_id is not None:
+            logger.error(
+                "Orphaned Substack draft left by a failed publish: %s", draft_id
+            )
+            note = (
+                f"Substack publish failed ({error_name}). Nothing was published; "
+                f"orphaned draft ID: {draft_id}"
+            )
+        else:
+            note = f"Substack publish failed ({error_name}). No draft was created."
+        if published_called:
+            logger.error("Draft %s may be published or orphaned", draft_id)
+        return PublishError(note, draft_id, maybe_published=published_called)
