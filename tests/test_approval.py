@@ -416,3 +416,19 @@ async def test_a_failed_published_reply_still_alerts_with_the_url_and_clears_but
     assert URL in alerts[0]
     assert "reply to you could not be sent" in alerts[0]
     assert len(h.bot.edits) == 1
+
+
+async def test_a_second_tap_after_a_failed_status_write_does_not_republish(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR-Agent: even if mark_published failed, this process never publishes twice."""
+
+    def broken(_id: int, _url: str) -> None:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(h.store, "mark_published", broken)
+    await h.tap()
+    assert h.status() == STATUS_PENDING  # the write really failed
+    await h.tap()
+    assert len(h.publisher.calls) == 1
+    assert h.bot.sent[-1] == ALREADY_HANDLED_TEXT

@@ -39,6 +39,9 @@ class ApproveService:
         self._queue = queue
         self._publisher = publisher
         self._in_flight: set[int] = set()
+        # Drafts published by this process: blocks a republish even if the store
+        # write that records it failed (the status would still read pending).
+        self._published: set[int] = set()
 
     async def on_approve_tap(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, draft: Draft
@@ -70,7 +73,7 @@ class ApproveService:
             logger.exception("Reading draft %d before publishing failed", draft_id)
             await self._fail_unexpected(context, chat_id, draft_id, error)
             return
-        if draft.status != STATUS_PENDING:
+        if draft.status != STATUS_PENDING or draft_id in self._published:
             await self._say(context, chat_id, ALREADY_HANDLED_TEXT)
             return
         try:
@@ -82,6 +85,7 @@ class ApproveService:
             logger.exception("Publishing draft %d failed unexpectedly", draft_id)
             await self._fail_unexpected(context, chat_id, draft_id, error)
             return
+        self._published.add(draft_id)
         await self._record_success(context, chat_id, draft_id, url)
         await self._remove_buttons(update, context, chat_id)
 
