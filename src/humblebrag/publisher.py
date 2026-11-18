@@ -86,8 +86,12 @@ class SubstackPublisher:
         Blocking: async callers use ``ensure_session``.
         """
         with self._lock:  # overlapping checks run one at a time
-            self._api = None
-            self._api = self._login()
+            try:
+                api = self._login()
+            except SubstackError:
+                self._api = None  # a failed check leaves no usable session
+                raise
+            self._api = api  # one assignment: readers never see a gap
 
     def _login(self) -> Any:
         """Build the API from the cookie, translating library errors."""

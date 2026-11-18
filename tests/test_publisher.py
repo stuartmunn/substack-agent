@@ -481,3 +481,22 @@ async def test_unexpected_library_errors_become_alerted_substack_errors(
         await publisher.ensure_session()
     assert len(alerts) == 1
     assert "Session check failed" in alerts[0]
+
+
+def test_a_recheck_never_exposes_a_missing_session() -> None:
+    """PR-Agent: while re-checking, readers still get the previous session."""
+    seen: list[object] = []
+    holder: dict[str, SubstackPublisher] = {}
+
+    def factory(**_kwargs: Any) -> Any:
+        if holder["p"]._api is not None:
+            seen.append(holder["p"].api)  # read mid re-check
+        return object()
+
+    publisher = SubstackPublisher(_config(), factory)
+    holder["p"] = publisher
+    publisher.check_session()
+    first = publisher.api
+    publisher.check_session()
+    assert seen == [first]
+    assert publisher.api is not first
