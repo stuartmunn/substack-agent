@@ -10,6 +10,7 @@ from humblebrag.bot import run_bot
 from humblebrag.config import Config, load_config_or_exit
 from humblebrag.heartbeat import heartbeat_loop
 from humblebrag.logging_setup import configure_logging, register_secrets
+from humblebrag.publisher import SubstackPublisher
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +40,13 @@ async def run_until_signalled(config: Config) -> None:
     If either task fails, the other is cancelled and the error propagates.
     """
     loop = asyncio.get_running_loop()
+    publisher = SubstackPublisher(config)
     async with asyncio.TaskGroup() as group:
         tasks = [
             group.create_task(heartbeat_loop()),
-            group.create_task(run_bot(config)),
+            group.create_task(
+                run_bot(config, on_started=publisher.check_session_or_alert)
+            ),
         ]
         for stop_signal in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(stop_signal, _request_stop, tasks)
