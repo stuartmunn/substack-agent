@@ -7,6 +7,7 @@ added behind this same class in SA-32, and always with ``send=False``.
 import asyncio
 import logging
 import re
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -68,6 +69,7 @@ class SubstackPublisher:
         self._publication_url = config.substack_publication_url
         self._api_factory = api_factory
         self._api: Any | None = None
+        self._lock = threading.Lock()
 
     @property
     def api(self) -> Any:
@@ -83,26 +85,29 @@ class SubstackPublisher:
         SubstackError for any other failure (outage, timeout, changed API).
         Blocking: async callers use ``ensure_session``.
         """
+        with self._lock:  # overlapping checks run one at a time
+            self._api = None
+            self._api = self._login()
+
+    def _login(self) -> Any:
+        """Build the API from the cookie, translating library errors."""
         try:
-            self._api = self._api_factory(
+            return self._api_factory(
                 cookies_string=cookie_string(self._cookie),
                 publication_url=self._publication_url,
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
         except SubstackAPIException as error:
-            self._api = None
             if error.status_code in AUTH_STATUS_CODES:
                 raise SubstackAuthError(SESSION_EXPIRED_MESSAGE) from None
             raise SubstackError(
                 f"Substack returned HTTP {error.status_code} during the session check"
             ) from None
         except SubstackRequestException as error:
-            self._api = None
             if error.message.startswith(_NO_PUBLICATION_MARKERS):
                 raise SubstackAuthError(SESSION_EXPIRED_MESSAGE) from None
             raise SubstackError("Substack gave an unusable reply") from None
         except requests.RequestException as error:
-            self._api = None
             raise SubstackError(
                 f"Substack could not be reached ({type(error).__name__})"
             ) from None

@@ -432,3 +432,27 @@ async def test_a_failing_startup_hook_is_alerted_not_lost(
     await bot._run_startup(broken)
     assert len(alerts) == 1
     assert "Startup task failed: RuntimeError: hook exploded" in alerts[0]
+
+
+async def test_overlapping_checks_never_run_at_the_same_time() -> None:
+    """PR-Agent: two concurrent ensure_session calls are serialised."""
+    import threading
+    import time
+
+    active = 0
+    peak = 0
+    guard = threading.Lock()
+
+    def factory(**_kwargs: Any) -> Any:
+        nonlocal active, peak
+        with guard:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.05)
+        with guard:
+            active -= 1
+        return object()
+
+    publisher = SubstackPublisher(_config(), factory)
+    await asyncio.gather(publisher.ensure_session(), publisher.ensure_session())
+    assert peak == 1
