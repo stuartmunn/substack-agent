@@ -492,3 +492,22 @@ async def test_the_pipeline_never_calls_the_publisher(
     )
     await rig.pipeline.run()
     assert called == []
+
+
+async def test_a_failure_to_discard_the_draft_does_not_hide_the_rekey_error(
+    rig: Rig, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR-Agent: if binning fails too, the re-key error is still reported."""
+
+    def broken_rekey(_old: str, _new: str) -> None:
+        raise RuntimeError("reservation file locked")
+
+    def broken_bin(_draft_id: int) -> None:
+        raise RuntimeError("db locked")
+
+    monkeypatch.setattr(rig.queue, "rekey", broken_rekey)
+    monkeypatch.setattr(rig.store, "mark_binned", broken_bin)
+    assert await rig.pipeline.run() is None
+    assert any("reservation file locked" in text for text in alerts)
+    assert any("discard draft" in text and "db locked" in text for text in alerts)
+    assert rig.reservations() == {}

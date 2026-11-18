@@ -38,9 +38,6 @@ SeedFor = Callable[[str], Awaitable[Seed]]
 GenerateChecked = Callable[[str, str | None], Awaitable[CheckedPost]]
 SendPreview = Callable[[Draft, str | None], Awaitable[None]]
 
-# These services alert for themselves, naming the step, before they raise.
-_ALREADY_ALERTED = (SeedGenerationError, GuardRejectedError, GuardError)
-
 
 @dataclass(frozen=True)
 class _Step:
@@ -111,7 +108,12 @@ class RunPipeline:
 
     @staticmethod
     def _classify(step: _Step, error: Exception) -> _Step:
-        """Name the failing step; guard errors come out of the generate call."""
+        """Name the failing step; guard errors come out of the generate call.
+
+        Guard rejections, guard errors and seed-generation failures were already
+        alerted by their own services (naming the step), so they are not
+        alerted again.
+        """
         if isinstance(error, GuardRejectedError | GuardError):
             return _Step(STEP_GUARD, alerted=True)
         if isinstance(error, SeedGenerationError):
@@ -133,8 +135,15 @@ class RunPipeline:
         try:
             await asyncio.to_thread(self._queue.rekey, key, str(draft.id))
         except Exception:
-            # Without the re-key Approve could not find the seed: discard the draft.
-            await asyncio.to_thread(self._store.mark_binned, draft.id)
+            # Without the re-key Approve could not find the seed: discard the
+            # draft. A failure to do so is alerted but must not hide this error.
+            try:
+                await asyncio.to_thread(self._store.mark_binned, draft.id)
+            except Exception as bin_error:
+                logger.exception(
+                    "Could not bin draft %d after a failed re-key", draft.id
+                )
+                await self._alert("discard draft", bin_error)
             raise
         return draft
 

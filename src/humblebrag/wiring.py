@@ -2,8 +2,10 @@
 
 ``Runtime.setup`` runs inside ``run_bot`` once the Telegram application exists
 (handlers must be installed before polling starts); ``Runtime.start`` runs
-after polling and alerts are live. Everything is created lazily in ``setup`` so
-that merely constructing a ``Runtime`` touches no files or network.
+after polling and alerts are live. Constructing a ``Runtime`` only builds the
+Substack publisher and session monitor, which read no files and use no network
+until their first check; everything else (database, seed files, Claude client,
+handlers) is created in ``setup``.
 """
 
 import asyncio

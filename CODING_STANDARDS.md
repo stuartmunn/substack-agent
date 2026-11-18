@@ -91,3 +91,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [ERR-19] Startup helpers that run before a long-lived loop handle their own recoverable errors, so a fault there cannot stop the loop from starting (from PR #24, 2026-11-18)
 - [ERR-20] Once an irreversible action has succeeded, every follow-up step (notifying, cleanup) is guarded so a failure there is logged and alerted with the result, never raised past the action (from PR #25, 2026-11-18)
 - [IDEM-01] After an irreversible external action, remember in memory that it happened, so a failed bookkeeping write cannot let a retry repeat it (from PR #25, 2026-11-18)
+- [ERR-21] Cleanup run inside an except block is guarded on its own (logged and alerted), so a cleanup failure never replaces the original error that is being reported (from PR #26, 2026-11-18)
