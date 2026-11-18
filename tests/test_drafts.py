@@ -1,6 +1,7 @@
 """Tests for the draft store and pending cap (SA-27 acceptance criteria)."""
 
 import sqlite3
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from humblebrag.drafts import (
     DraftStateError,
     DraftStore,
     DraftStoreError,
+    PendingCapReachedError,
     RunGate,
     format_pending_summary,
     paused_message,
@@ -289,3 +291,49 @@ async def test_a_lowered_cap_reports_the_real_pending_count(
     notifier = Notifier()
     await RunGate(store, 3, notifier).allow_run()
     assert notifier.sent[0].startswith("5 drafts waiting")
+
+
+def test_create_refuses_to_exceed_the_cap_and_stores_nothing(
+    store: DraftStore,
+) -> None:
+    """ERR-12: the cap is enforced by the insert, not just checked beforehand."""
+    for n in range(3):
+        store.create("s", f"T{n}", "sub", "body", max_pending=3)
+    with pytest.raises(PendingCapReachedError, match="3 drafts"):
+        store.create("s", "T3", "sub", "body", max_pending=3)
+    assert store.pending_count() == 3
+
+
+def test_resolved_drafts_do_not_count_towards_the_cap(store: DraftStore) -> None:
+    """AC5: only pending drafts fill the cap."""
+    first = store.create("s", "T0", "sub", "body", max_pending=1)
+    store.mark_binned(first.id)
+    assert store.create("s", "T1", "sub", "body", max_pending=1).id == 2
+
+
+def test_racing_creators_cannot_exceed_the_cap(tmp_path: Path) -> None:
+    """ERR-12: ten simultaneous runs with cap 3 produce exactly 3 drafts."""
+    path = tmp_path / "humblebrag.db"
+    DraftStore(path)
+    results: list[bool] = []
+    lock = threading.Lock()
+    start = threading.Barrier(10)
+
+    def attempt() -> None:
+        racer = DraftStore(path)
+        start.wait()
+        try:
+            racer.create("s", "T", "sub", "body", max_pending=3)
+            outcome = True
+        except PendingCapReachedError:
+            outcome = False
+        with lock:
+            results.append(outcome)
+
+    threads = [threading.Thread(target=attempt) for _ in range(10)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert results.count(True) == 3
+    assert DraftStore(path).pending_count() == 3

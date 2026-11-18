@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = Path("/data/humblebrag.db")
 BUSY_TIMEOUT_SECONDS = 5.0
+UNLIMITED_PENDING = 2**62
 STATUS_PENDING = "pending"
 STATUS_PUBLISHED = "published"
 STATUS_BINNED = "binned"
@@ -57,6 +58,10 @@ class DraftNotFoundError(DraftError):
 
 class DraftStateError(DraftError):
     """The draft is not pending, so it cannot be resolved again."""
+
+
+class PendingCapReachedError(DraftError):
+    """Creating the draft would exceed the pending cap; nothing was stored."""
 
 
 class DraftStoreError(DraftError):
@@ -118,16 +123,31 @@ class DraftStore:
         self._execute(SCHEMA)
 
     def create(
-        self, seed: str, title: str, subtitle: str, body: str, steer: str | None = None
+        self,
+        seed: str,
+        title: str,
+        subtitle: str,
+        body: str,
+        steer: str | None = None,
+        max_pending: int | None = None,
     ) -> Draft:
-        """Store a new pending draft (steer, if any, starts the steer history)."""
+        """Store a new pending draft (steer, if any, starts the steer history).
+
+        With ``max_pending`` the cap is enforced inside the INSERT itself, so
+        two runs racing past ``RunGate`` cannot both add the last draft.
+        Raises PendingCapReachedError if the cap is already reached.
+        """
         history = json.dumps([steer] if steer else [])
         created = self._clock().isoformat()
+        cap = max_pending if max_pending is not None else UNLIMITED_PENDING
         cursor = self._execute(
             "INSERT INTO drafts (seed, title, subtitle, body, steer_history, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (seed, title, subtitle, body, history, created),
+            " SELECT ?, ?, ?, ?, ?, ?"
+            " WHERE (SELECT COUNT(*) FROM drafts WHERE status = ?) < ?",
+            (seed, title, subtitle, body, history, created, STATUS_PENDING, cap),
         )
+        if cursor.rowcount == 0:
+            raise PendingCapReachedError(f"{cap} drafts are already pending")
         return self.get(cursor.lastrowid)
 
     def get(self, draft_id: int) -> Draft:
