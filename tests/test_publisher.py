@@ -203,6 +203,10 @@ async def test_startup_hook_runs_when_the_bot_starts(
     async with asyncio.timeout(5):
         await started.wait()
     assert sender_seen[0] is not None
+    # A hook that never returns (the daily monitor loop) must not block the bot:
+    # polling is already running and the bot task is still live.
+    updater.start_polling.assert_awaited_once()
+    assert not task.done()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -213,7 +217,8 @@ def test_entrypoint_passes_the_session_check_to_the_bot() -> None:
     source = (
         Path(__file__).resolve().parent.parent / "src/humblebrag/__main__.py"
     ).read_text()
-    assert "on_started=publisher.check_session_or_alert" in source
+    assert "publisher.check_session_or_alert()" in source
+    assert "on_started=lambda: run_session_checks(publisher, monitor)" in source
 
 
 async def test_startup_check_reports_health_without_raising(alerts: list[str]) -> None:

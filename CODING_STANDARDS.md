@@ -88,3 +88,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [ERR-18] Every call into a third-party library from a service is wrapped so any exception type becomes the service's typed error, which callers alert on (from PR #22, 2026-11-18)
 - [CON-02] Swap shared state in one assignment after building the new value; never clear-then-set where another thread can read the gap (from PR #22, 2026-11-18)
 - [OPS-01] A blocking call run in a worker thread cannot be cancelled: the container stop_grace_period must exceed its timeout (from PR #22, 2026-11-18)
+- [ERR-19] Startup helpers that run before a long-lived loop handle their own recoverable errors, so a fault there cannot stop the loop from starting (from PR #24, 2026-11-18)
