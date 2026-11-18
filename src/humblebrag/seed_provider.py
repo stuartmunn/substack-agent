@@ -35,7 +35,7 @@ class SeedGenerationError(Exception):
 def _clean_suggestion(reply: str) -> str | None:
     """Return the suggestion as a one-line seed, or None if it is unusable."""
     text = reply.strip().strip(_SURROUNDING_QUOTES).strip()
-    if not text or "\n" in text or len(text) > MAX_SEED_CHARS:
+    if not text or not text.isprintable() or len(text) > MAX_SEED_CHARS:
         return None
     return text
 

@@ -178,13 +178,16 @@ async def test_success_on_the_last_retry_does_not_alert(
     [
         "",
         "two\nlines",
+        "carriage\rreturn",
+        "tab\tseparated",
+        "bell\x07char",
         "x" * (MAX_SEED_CHARS + 1),
     ],
 )
 async def test_unusable_suggestions_count_as_attempts(
     tmp_path: Path, bad: str, alerts: list[str]
 ) -> None:
-    """AC3: empty, multi-line or over-long text is not appended."""
+    """AC3: empty, multi-line, control-character or over-long text is not appended."""
     provider, client, path = _setup(tmp_path, ALL_USED, [bad] * 4)
     with pytest.raises(SeedGenerationError):
         await provider.seed_for(DRAFT)
@@ -272,3 +275,17 @@ def test_add_generated_rejects_a_duplicate_without_touching_the_file(
     queue = SeedQueue(path, lambda: TODAY)
     assert queue.add_generated("SPILLED coffee", DRAFT) is None
     assert path.read_text() == ALL_USED
+
+
+@pytest.mark.parametrize("text", ["Sneaky (generated)", "Sneaky (used 2026-01-01)"])
+async def test_metadata_lookalike_text_round_trips_unchanged(
+    tmp_path: Path, text: str
+) -> None:
+    """Text that looks like metadata is stored and re-read as plain seed text."""
+    provider, _, _ = _setup(tmp_path, ALL_USED, [text])
+    seed = await provider.seed_for(DRAFT)
+    assert seed.text == text
+    assert seed.generated
+    queue = SeedQueue(tmp_path / "seed.md", lambda: TODAY)
+    queue.approve(DRAFT)
+    assert queue.seed_texts()[-1] == text
