@@ -22,6 +22,8 @@ ALERT_EVENT = "guard"
 PASS_ICON = "🛡️"
 FAIL_ICON = "🚫"
 _WORD = re.compile(r"[a-z]+")
+_DRAFT_TAG = re.compile(r"<\s*/?\s*draft\b[^>]*>?", re.IGNORECASE)
+NEUTRALISED_TAG = "[draft tag removed]"
 
 # Whole words only, so "class", "assess" and "cockpit" never match.
 PROFANITY_WORDLIST = frozenset(
@@ -138,10 +140,11 @@ class SafetyGuard:
         wordlist = check_wordlist(post)
         if not wordlist.passed:
             return wordlist
-        draft = (
-            f"<draft>\nTitle: {post.title}\nSubtitle: {post.subtitle}\n\n"
-            f"{post.body_markdown}\n</draft>"
+        title, subtitle, body = (
+            _DRAFT_TAG.sub(NEUTRALISED_TAG, text)
+            for text in (post.title, post.subtitle, post.body_markdown)
         )
+        draft = f"<draft>\nTitle: {title}\nSubtitle: {subtitle}\n\n{body}\n</draft>"
         reply = await self._client.complete(
             CLASSIFIER_SYSTEM, draft, CLASSIFIER_MAX_TOKENS
         )
