@@ -391,6 +391,32 @@ async def test_lock_timeout_alerts_and_does_not_run(
     assert len(alerts) == 1
 
 
+async def test_waiting_for_the_lock_does_not_block_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ERR-13: a contended lock stalls the claim, not the shared event loop."""
+    monkeypatch.setattr(
+        scheduler_module, "file_lock", lambda path: file_lock(path, timeout=0.3)
+    )
+    scheduler, pipeline, _, state = _build(tmp_path, _utc(2026, 1, 15, 9, 0))
+    beats = 0
+
+    async def other_task() -> None:
+        nonlocal beats
+        while True:
+            beats += 1
+            await asyncio.sleep(0.01)
+
+    with state._lock_path.open("a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        background = asyncio.create_task(other_task())
+        with pytest.raises(LockTimeoutError):
+            await scheduler.tick()
+        background.cancel()
+    assert beats >= 10
+    assert pipeline.runs == 0
+
+
 @pytest.mark.parametrize(
     "content",
     [

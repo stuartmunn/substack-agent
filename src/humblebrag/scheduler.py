@@ -158,7 +158,8 @@ class Scheduler:
         now = self._clock()
         if not is_due(now, self._config):
             return None
-        claim = self._state.claim(now.astimezone(self._config.tz).date())
+        today = now.astimezone(self._config.tz).date()
+        claim = await asyncio.to_thread(self._state.claim, today)
         if claim is Claim.SKIPPED:
             logger.info("Today's run skipped by /skip")
         elif claim is Claim.RUN:
