@@ -39,6 +39,14 @@ GenerateChecked = Callable[[str, str | None], Awaitable[CheckedPost]]
 SendPreview = Callable[[Draft, str | None], Awaitable[None]]
 
 
+@dataclass
+class _RunState:
+    """What one run has created so far, for cleanup."""
+
+    key: str
+    draft: Draft | None = None
+
+
 @dataclass(frozen=True)
 class _Step:
     """The step a failure happened in, and whether it was already alerted."""
@@ -83,24 +91,25 @@ class RunPipeline:
             return None
         if not allowed:
             return None
-        key = PROVISIONAL_PREFIX + uuid.uuid4().hex
-        draft: Draft | None = None
+        state = _RunState(PROVISIONAL_PREFIX + uuid.uuid4().hex)
         step = _Step(STEP_SEED)
         try:
-            seed = await self._seed_for(key)
+            seed = await self._seed_for(state.key)
             step = _Step(STEP_GENERATE)
             checked = await self._generate(seed.text, None)
             step = _Step(STEP_SAVE)
-            draft = await self._save(seed.text, checked, key)
+            await self._save(state, seed.text, checked)
+            draft = state.draft
+            assert draft is not None
             step = _Step(STEP_PREVIEW)
             await self._send_preview(draft, checked.guard.preview_line())
         except asyncio.CancelledError:
-            await self._release(key, draft)  # shutting down: do not strand the seed
+            await self._release(state)  # shutting down: do not strand the seed
             raise
         except Exception as error:
             step = self._classify(step, error)
             logger.exception("Run failed at step: %s", step.name)
-            await self._release(key, draft)
+            await self._release(state)
             if not step.alerted:
                 await self._alert(step.name, error)
             return None
@@ -120,47 +129,59 @@ class RunPipeline:
             return _Step(STEP_SEED, alerted=True)
         return step
 
-    async def _save(self, seed_text: str, checked: CheckedPost, key: str) -> Draft:
-        """Store the draft, then move the seed reservation to the draft's id."""
+    async def _save(
+        self, state: "_RunState", seed_text: str, checked: CheckedPost
+    ) -> None:
+        """Store the draft, then move the seed reservation to the draft's id.
+
+        The draft is recorded in ``state`` as soon as it exists (even if the run
+        is cancelled while the write is in flight), so cleanup can always find it.
+        """
         post = checked.post
-        draft = await asyncio.to_thread(
-            self._store.create,
-            seed_text,
-            post.title,
-            post.subtitle,
-            post.body_markdown,
-            None,
-            self._max_pending,
+        task = asyncio.ensure_future(
+            asyncio.to_thread(
+                self._store.create,
+                seed_text,
+                post.title,
+                post.subtitle,
+                post.body_markdown,
+                None,
+                self._max_pending,
+            )
         )
         try:
-            await asyncio.to_thread(self._queue.rekey, key, str(draft.id))
-        except Exception:
-            # Without the re-key Approve could not find the seed: discard the
-            # draft. A failure to do so is alerted but must not hide this error.
-            try:
-                await asyncio.to_thread(self._store.mark_binned, draft.id)
-            except Exception as bin_error:
-                logger.exception(
-                    "Could not bin draft %d after a failed re-key", draft.id
-                )
-                await self._alert("discard draft", bin_error)
+            state.draft = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # A thread cannot be interrupted: let the write finish, then keep
+            # the draft so the cleanup that follows can bin it.
+            await asyncio.wait({task})
+            if not task.cancelled() and task.exception() is None:
+                state.draft = task.result()
             raise
-        return draft
+        await asyncio.to_thread(self._queue.rekey, state.key, str(state.draft.id))
 
-    async def _release(self, key: str, draft: Draft | None) -> None:
+    async def _release(self, state: "_RunState") -> None:
         """Release the seed and bin any saved draft. Never raises.
 
-        A cleanup failure is alerted too, because a stuck reservation or a
-        pending draft nobody has seen needs a human.
+        The reservation may sit under the provisional key or, after the re-key,
+        under the draft id (a cancelled re-key can finish late), so both are
+        released; the file lock orders them against any late re-key. A cleanup
+        failure is alerted too, because a stuck reservation or a pending draft
+        nobody has seen needs a human.
         """
-        reservation = key if draft is None else str(draft.id)
         try:
-            await asyncio.to_thread(self._queue.bin_draft, reservation)
-            if draft is not None:
-                await asyncio.to_thread(self._store.mark_binned, draft.id)
+            await asyncio.to_thread(self._queue.bin_draft, state.key)
+            if state.draft is not None:
+                await asyncio.to_thread(self._queue.bin_draft, str(state.draft.id))
         except Exception as error:  # cleanup must not hide the original failure
             logger.exception("Releasing the seed after a failed run failed")
             await self._alert("release seed", error)
+        if state.draft is not None:
+            try:
+                await asyncio.to_thread(self._store.mark_binned, state.draft.id)
+            except Exception as error:  # the draft stays pending: a human must act
+                logger.exception("Could not bin draft %d", state.draft.id)
+                await self._alert("discard draft", error)
 
     @staticmethod
     async def _alert(step: str, error: BaseException) -> None:

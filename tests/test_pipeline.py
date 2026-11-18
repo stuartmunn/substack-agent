@@ -511,3 +511,50 @@ async def test_a_failure_to_discard_the_draft_does_not_hide_the_rekey_error(
     assert any("reservation file locked" in text for text in alerts)
     assert any("discard draft" in text and "db locked" in text for text in alerts)
     assert rig.reservations() == {}
+
+
+async def test_cancelling_during_the_draft_write_still_bins_the_late_draft(
+    rig: Rig,
+) -> None:
+    """PR-Agent: a thread cannot be interrupted, so a draft written after the
+    cancel is found and binned, and the seed is released."""
+    import threading
+    import time
+
+    inside = threading.Event()
+    real_create = rig.store.create
+
+    def slow_create(*args: Any, **kwargs: Any) -> Draft:
+        inside.set()
+        time.sleep(0.2)
+        return real_create(*args, **kwargs)
+
+    rig.store.create = slow_create  # type: ignore[method-assign]
+    task = asyncio.create_task(rig.pipeline.run())
+    async with asyncio.timeout(5):
+        while not inside.is_set():
+            await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert rig.reservations() == {}
+    assert rig.store.list_pending() == []
+    assert rig.store.get(1).status == STATUS_BINNED
+
+
+async def test_a_failed_bin_after_a_failed_rekey_is_alerted_and_names_the_draft(
+    rig: Rig, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR-Agent: a draft that cannot be binned is reported, never silently stuck."""
+
+    def broken_rekey(_old: str, _new: str) -> None:
+        raise RuntimeError("locked")
+
+    def broken_bin(_draft_id: int) -> None:
+        raise RuntimeError("db locked")
+
+    monkeypatch.setattr(rig.queue, "rekey", broken_rekey)
+    monkeypatch.setattr(rig.store, "mark_binned", broken_bin)
+    assert await rig.pipeline.run() is None
+    assert rig.store.get(1).status == STATUS_PENDING  # still there, and alerted
+    assert any("discard draft" in text for text in alerts)
