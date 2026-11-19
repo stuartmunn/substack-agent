@@ -251,11 +251,11 @@ async def test_start_and_help_list_the_commands() -> None:
         await bot.show_help(update, MagicMock())
         text = update.effective_message.reply_text.await_args.args[0]
         assert f"/{name}" in text
-    assert set(bot.COMMANDS) == {"start", "help"}
+    assert {"start", "help"} <= set(bot.COMMANDS)
 
 
 def test_start_and_help_are_registered_as_commands(config: Config) -> None:
-    """AC3: both commands are wired to the help handler."""
+    """AC3: both commands are wired to the help handler, and only those two."""
     application = bot.build_application(config)
     commands = {
         command
@@ -264,3 +264,10 @@ def test_start_and_help_are_registered_as_commands(config: Config) -> None:
         for command in handler.commands
     }
     assert commands == {"start", "help"}
+
+
+def test_help_lists_the_new_commands() -> None:
+    """SA-36: /help mentions /seed, /seeds, /skip and /now."""
+    text = bot.help_text()
+    for name in ("seed", "seeds", "skip", "now"):
+        assert f"/{name} " in text

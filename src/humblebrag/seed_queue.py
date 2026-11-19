@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+from typing import NamedTuple
 
 from humblebrag.seed import Seed, SeedFile, seed_key, write_atomically
 
@@ -25,6 +26,18 @@ JSON_INDENT = 2
 LOCK_SUFFIX = ".lock"
 LOCK_TIMEOUT_SECONDS = 5.0
 LOCK_POLL_SECONDS = 0.05
+MAX_SEED_LENGTH = 300
+
+
+class AddedSeed(NamedTuple):
+    """A seed that was just added: its stored text and the unused count after it."""
+
+    text: str
+    unused_count: int
+
+
+class InvalidSeedError(ValueError):
+    """Seed text typed by the user cannot be added to the queue."""
 
 
 class ReservationError(Exception):
@@ -110,6 +123,33 @@ class SeedQueue:
     def seed_texts(self) -> list[str]:
         """Every seed's text (used or not), in file order."""
         return [seed.text for seed in SeedFile.load(self._seed_path).seeds]
+
+    def unused_texts(self) -> list[str]:
+        """The text of every unused seed (reserved ones included), in file order."""
+        return [seed.text for seed in SeedFile.load(self._seed_path).unused]
+
+    def add_seed(self, text: str) -> AddedSeed:
+        """Append ``text`` as an unused seed; return it and the new unused count.
+
+        The count is taken under the same lock as the append, so it is exact.
+
+        Raises InvalidSeedError if it is empty, too long, has control
+        characters, or is already an unused seed (compared case-insensitively).
+        """
+        cleaned = " ".join(text.split())
+        if not cleaned:
+            raise InvalidSeedError("The seed is empty.")
+        if len(cleaned) > MAX_SEED_LENGTH:
+            raise InvalidSeedError(f"The seed is over {MAX_SEED_LENGTH} characters.")
+        if not cleaned.isprintable():
+            raise InvalidSeedError("The seed has control characters.")
+        with self._locked():
+            seed_file = SeedFile.load(self._seed_path)
+            if seed_key(cleaned) in {seed_key(s.text) for s in seed_file.unused}:
+                raise InvalidSeedError("That seed is already in the queue.")
+            seed_file.append_seed(cleaned)
+            seed_file.save()
+            return AddedSeed(cleaned, len(seed_file.unused))
 
     def add_generated(self, text: str, draft_id: str) -> Seed | None:
         """Append ``text`` as a ``(generated)`` seed and reserve one for the draft.

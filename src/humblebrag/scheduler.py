@@ -16,7 +16,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from enum import Enum
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -120,6 +120,19 @@ class SchedulerState:
         with file_lock(self._lock_path):
             current = self.read()
             self._write(SchedulerSnapshot(current.last_run_date, skip))
+
+    def skip_next_run(self, today: date) -> date:
+        """Set the skip flag and return the date of the run it will suppress.
+
+        That is ``today`` until today's run has been claimed, then tomorrow.
+        Reading the claim and setting the flag happen under one lock, so the
+        scheduler cannot claim today in between and make the answer wrong.
+        """
+        with file_lock(self._lock_path):
+            current = self.read()
+            day = today + timedelta(days=1) if current.last_run_date == today else today
+            self._write(SchedulerSnapshot(current.last_run_date, True))
+            return day
 
     def _write(self, snapshot: SchedulerSnapshot) -> None:
         """Atomically save ``snapshot``."""
