@@ -28,15 +28,15 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [TST-02] No network calls in unit tests; mock Telegram, Anthropic and Substack.
 - [TST-03] Tests are deterministic: no reliance on wall-clock time, randomness or test order.
 - [TST-04] Every failure path has a test that asserts `alert()` is called.
-- [TST-05] The test that enforces `send=False` on Substack publish stays green.
+- [TST-05] The test that forbids any Substack publish call (and Notes) stays green.
 - [TST-06] Tests use temporary directories, never the real `/data` volume.
 
 ## Security and secrets
 - [SEC-01] No secrets in code, logs, tests, fixtures or commit history.
 - [SEC-02] Secrets come from env vars or Docker secrets (`*_FILE`) only.
 - [SEC-03] Never log secret values, including in exception messages or repr output.
-- [SEC-04] Nothing publishes without Approve from Telegram.
-- [SEC-05] Substack publish always passes `send=False`.
+- [SEC-04] Nothing reaches Substack, even as a draft, without Approve from Telegram. The agent never calls Substack's publish endpoint; publishing is done by Stuart in the Substack editor.
+- [SEC-05] The agent never calls Substack's publish endpoint. It creates and updates drafts only. Publishing is done by Stuart in the Substack editor.
 - [SEC-06] Only the configured Telegram chat can approve, redo or bin.
 - [SEC-07] Generated content is obvious satire: no real named people or companies, nothing defamatory, no foul language, English.
 - [SEC-08] Dependencies are pinned in `pyproject.toml`.
@@ -102,3 +102,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [DB-02] Rebuilding an AUTOINCREMENT table restores its `sqlite_sequence` counter even when the table is empty (delete then insert, not update) (from PR #31, 2026-11-19)
 - [ERR-23] In a multi-step operation every statement, reads included, runs through the step runner so a failure names the real step (from PR #31, 2026-11-19)
 - [SEC-16] SQL values are bound as parameters, never interpolated into the statement text (from PR #31, 2026-11-19)
+- [IDEM-02] When an external create call may have succeeded but its reply cannot be read, the error says the resource may exist, and the raw reply is logged (truncated), so a retry is not blind (from PR #32, 2026-11-19)

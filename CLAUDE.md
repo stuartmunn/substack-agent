@@ -3,7 +3,8 @@
 ## What this is
 Dockerised Python agent on `andor`. Daily at 08:30 Europe/London it writes one
 parody LinkedIn-style Substack post from a seed in `/data/seed.md`, sends it to
-Stuart on Telegram (Approve / Redo / Bin) and publishes only on Approve.
+Stuart on Telegram (Approve / Redo / Bin). Approve puts it into Substack as a
+draft and sends Stuart the editor link; Stuart publishes it himself.
 Jira project: SA (stuartmunn.atlassian.net). One Jira story = one branch = one PR.
 
 ## Related docs
@@ -21,8 +22,8 @@ Jira project: SA (stuartmunn.atlassian.net). One Jira story = one branch = one P
 ## Hard rules
 - Never commit secrets. Config comes from env or Docker secrets (`*_FILE`).
 - Never log secret values.
-- Substack publish must always pass `send=False`. A test enforces this.
-- Nothing publishes without Approve from Telegram.
+- The agent never calls Substack's publish endpoint. It creates and updates drafts only. Publishing is done by Stuart in the Substack editor. A test enforces this.
+- Nothing reaches Substack, even as a draft, without Approve from Telegram.
 - Every failure alerts Stuart on Telegram via `alert()`. Never fail silently.
 - Generated content: obvious satire, no real named people or companies,
   nothing defamatory, no foul language, English.
