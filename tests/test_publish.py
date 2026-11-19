@@ -125,6 +125,19 @@ async def test_a_reply_without_a_draft_id_is_an_error_not_a_guess(
         await h.publisher.create_draft("T", "S", "b")
 
 
+async def test_an_unreadable_create_reply_warns_the_draft_may_exist(
+    h: Harness, caplog: pytest.LogCaptureFixture
+) -> None:
+    """PR-Agent: Substack made the draft but no ID came back, so say so and log
+    the reply, because a retry could otherwise duplicate it unseen."""
+    h.api.create_reply = {"unexpected": "shape"}
+    with caplog.at_level(logging.ERROR), pytest.raises(DraftError) as raised:
+        await h.publisher.create_draft("T", "S", "b")
+    assert "may exist on Substack" in str(raised.value)
+    assert "Check Drafts" in str(raised.value)
+    assert "unexpected" in caplog.text
+
+
 # AC7: update an existing draft
 
 

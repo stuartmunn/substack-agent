@@ -204,9 +204,20 @@ class SubstackPublisher:
                 reply = self.api.create_draft_from_markdown(
                     title, body_markdown, subtitle=subtitle
                 )
-                return self._draft_id(reply)
             except Exception as error:  # noqa: BLE001  # ERR-18: any library error
                 raise self._draft_failure("creating", error) from None
+            try:
+                return self._draft_id(reply)
+            except ValueError as error:
+                logger.error(
+                    "Substack accepted the draft but its reply had no usable id: %.300r",
+                    reply,
+                )
+                raise DraftError(
+                    f"Substack draft creating failed ({type(error).__name__}): the "
+                    "draft may exist on Substack without a known ID. Check Drafts "
+                    "in Substack before tapping Approve again."
+                ) from None
 
     def _update_blocking(
         self, draft_id: str, title: str, subtitle: str, body_markdown: str

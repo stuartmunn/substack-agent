@@ -26,7 +26,12 @@ from humblebrag.buttons import ACTIONS_KEY, ALREADY_HANDLED_TEXT
 from humblebrag.config import load_config
 from humblebrag.drafts import STATUS_HANDED_OVER, STATUS_PENDING, DraftStore
 from humblebrag.preview import ACTION_APPROVE
-from humblebrag.publisher import DraftError, SubstackAuthError, SubstackPublisher
+from humblebrag.publisher import (
+    DraftError,
+    SubstackAuthError,
+    SubstackError,
+    SubstackPublisher,
+)
 from humblebrag.seed_queue import SeedQueue
 
 CHAT = 12345
@@ -413,6 +418,17 @@ async def test_a_session_failure_is_not_alerted_twice(
     assert alerts == []
     assert h.stored().status == STATUS_PENDING
     assert "session expired" in h.bot.sent[-1]
+
+
+async def test_a_plain_session_check_failure_is_not_alerted_twice(
+    h: Harness, alerts: list[str]
+) -> None:
+    """PR-Agent: any SubstackError that is not a DraftError came from the session
+    check, which alerts itself, so Approve adds no second alert."""
+    h.publisher.error = SubstackError("Session check failed: outage")
+    await h.tap()
+    assert alerts == []
+    assert h.stored().status == STATUS_PENDING
 
 
 async def test_an_untyped_create_failure_alerts_and_keeps_the_draft_pending(
