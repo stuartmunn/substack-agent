@@ -26,9 +26,12 @@ MAX_REDOS = 3
 STATUS_PENDING = "pending"
 STATUS_PUBLISHED = "published"
 STATUS_BINNED = "binned"
+STATUS_HANDED_OVER = "handed_over"
 SUMMARY_TITLE_CHARS = 60
-SCHEMA = f"""
-CREATE TABLE IF NOT EXISTS drafts (
+DRAFTS_TABLE = "drafts"
+REBUILT_TABLE = "drafts_new"
+NEW_COLUMN = "substack_draft_id"
+_TABLE_BODY = f"""(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     seed TEXT NOT NULL,
     title TEXT NOT NULL,
@@ -37,15 +40,37 @@ CREATE TABLE IF NOT EXISTS drafts (
     steer_history TEXT NOT NULL,
     redo_count INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT '{STATUS_PENDING}'
-        CHECK (status IN ('{STATUS_PENDING}', '{STATUS_PUBLISHED}', '{STATUS_BINNED}')),
+        CHECK (status IN ('{STATUS_PENDING}', '{STATUS_HANDED_OVER}',
+                          '{STATUS_PUBLISHED}', '{STATUS_BINNED}')),
     created_at TEXT NOT NULL,
     resolved_at TEXT,
-    substack_url TEXT
-)
-"""
-_COLUMNS = (
+    substack_url TEXT,
+    {NEW_COLUMN} TEXT
+)"""
+SCHEMA = f"CREATE TABLE {DRAFTS_TABLE} {_TABLE_BODY}"
+_OLD_COLUMN_LIST = (
     "id, seed, title, subtitle, body, steer_history, redo_count, status, "
     "created_at, resolved_at, substack_url"
+)
+STEP_COPY = "copy the existing rows"
+_TABLE_INFO_SQL = f"PRAGMA table_info({DRAFTS_TABLE})"
+# SQLite cannot change a CHECK constraint in place, so the table is rebuilt.
+# Each step is (name, SQL); all of them run in one transaction.
+_REBUILD_STEPS = (
+    ("create the new table", f"CREATE TABLE {REBUILT_TABLE} {_TABLE_BODY}"),
+    (
+        STEP_COPY,
+        (
+            f"INSERT INTO {REBUILT_TABLE} ({_OLD_COLUMN_LIST})"
+            f" SELECT {_OLD_COLUMN_LIST} FROM {DRAFTS_TABLE}"
+        ),
+    ),
+    ("drop the old table", f"DROP TABLE {DRAFTS_TABLE}"),
+    ("rename the new table", f"ALTER TABLE {REBUILT_TABLE} RENAME TO {DRAFTS_TABLE}"),
+)
+_COLUMNS = (
+    "id, seed, title, subtitle, body, steer_history, redo_count, status, "
+    "created_at, resolved_at, substack_url, substack_draft_id"
 )
 
 
@@ -73,6 +98,16 @@ class DraftStoreError(DraftError):
     """The database could not be opened, read or written."""
 
 
+class DraftMigrationError(DraftStoreError):
+    """The drafts table could not be migrated; the original table is untouched."""
+
+    def __init__(self, step: str, cause: str) -> None:
+        """Name the step that failed and why."""
+        super().__init__(f"Draft table migration failed at step '{step}': {cause}")
+        self.step = step
+        self.cause = cause
+
+
 @dataclass(frozen=True)
 class Draft:
     """One stored draft."""
@@ -88,6 +123,7 @@ class Draft:
     created_at: datetime
     resolved_at: datetime | None
     substack_url: str | None
+    substack_draft_id: str | None = None
 
 
 def _to_draft(row: tuple) -> Draft:
@@ -105,6 +141,7 @@ def _to_draft(row: tuple) -> Draft:
         created_at=datetime.fromisoformat(row[8]),
         resolved_at=None if resolved is None else datetime.fromisoformat(resolved),
         substack_url=row[10],
+        substack_draft_id=row[11],
     )
 
 
@@ -116,7 +153,10 @@ class DraftStore:
         path: Path = DEFAULT_DB_PATH,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
-        """Create the database file and table if needed; ``clock`` gives UTC now."""
+        """Create or migrate the drafts table; ``clock`` gives UTC now.
+
+        Raises DraftMigrationError if an old table cannot be rebuilt.
+        """
         self._path = path
         self._clock = clock or (lambda: datetime.now(UTC))
         try:
@@ -125,7 +165,7 @@ class DraftStore:
             raise DraftStoreError(
                 f"Draft database directory cannot be created: {type(error).__name__}"
             ) from None
-        self._execute(SCHEMA)
+        self._migrate()
 
     def create(
         self,
@@ -185,6 +225,32 @@ class DraftStore:
         """Resolve a pending draft as binned."""
         return self._resolve(draft_id, STATUS_BINNED, None)
 
+    def mark_handed_over(
+        self, draft_id: int, substack_draft_id: str, url: str
+    ) -> Draft:
+        """Resolve a pending draft as handed over to Substack as a draft.
+
+        Records the Substack draft ID and the editor link. Raises
+        DraftNotFoundError or DraftStateError (not pending).
+        """
+        return self._resolve(
+            draft_id, STATUS_HANDED_OVER, url, substack_draft_id=substack_draft_id
+        )
+
+    def set_substack_draft_id(self, draft_id: int, substack_draft_id: str) -> Draft:
+        """Record the Substack draft ID on a pending draft.
+
+        Raises DraftNotFoundError or DraftStateError (not pending).
+        """
+        cursor = self._execute(
+            f"UPDATE drafts SET {NEW_COLUMN} = ? WHERE id = ? AND status = ?",
+            (substack_draft_id, draft_id, STATUS_PENDING),
+        )
+        if cursor.rowcount == 0:
+            current = self.get(draft_id)
+            raise DraftStateError(f"Draft {draft_id} is already {current.status}")
+        return self.get(draft_id)
+
     def apply_redo(
         self,
         draft_id: int,
@@ -226,18 +292,74 @@ class DraftStore:
             ) from None
         return self.get(draft_id)
 
-    def _resolve(self, draft_id: int, status: str, url: str | None) -> Draft:
-        """Move a pending draft to ``status``, atomically checking it is pending."""
+    def _resolve(
+        self,
+        draft_id: int,
+        status: str,
+        url: str | None,
+        substack_draft_id: str | None = None,
+    ) -> Draft:
+        """Move a pending draft to ``status``, atomically checking it is pending.
+
+        A ``substack_draft_id`` of None keeps any ID already recorded.
+        """
         resolved = self._clock().isoformat()
         cursor = self._execute(
-            "UPDATE drafts SET status = ?, resolved_at = ?, substack_url = ?"
-            " WHERE id = ? AND status = ?",
-            (status, resolved, url, draft_id, STATUS_PENDING),
+            "UPDATE drafts SET status = ?, resolved_at = ?, substack_url = ?,"
+            f" {NEW_COLUMN} = COALESCE(?, {NEW_COLUMN}) WHERE id = ? AND status = ?",
+            (status, resolved, url, substack_draft_id, draft_id, STATUS_PENDING),
         )
         if cursor.rowcount == 0:
             current = self.get(draft_id)
             raise DraftStateError(f"Draft {draft_id} is already {current.status}")
         return self.get(draft_id)
+
+    def _migrate(self) -> None:
+        """Create the table, or rebuild an old one, in a single transaction.
+
+        Safe to rerun: a table that already has the new column is left alone,
+        and that check is a plain read, so a normal start-up takes no write
+        lock. On any failure the transaction rolls back, so the original table and
+        its rows are untouched, and DraftMigrationError names the step.
+        """
+        try:
+            with closing(
+                sqlite3.connect(self._path, timeout=BUSY_TIMEOUT_SECONDS)
+            ) as connection:
+                connection.isolation_level = None  # explicit BEGIN/COMMIT
+                if _is_current(connection):
+                    return
+                self._migrate_in_transaction(connection)
+        except sqlite3.Error as error:
+            raise DraftMigrationError(
+                "open the database", f"{type(error).__name__}: {error}"
+            ) from None
+
+    def _migrate_in_transaction(self, connection: sqlite3.Connection) -> None:
+        """BEGIN, migrate, COMMIT; roll back (and log, never mask) on failure."""
+        _run_step(connection, "start the transaction", "BEGIN IMMEDIATE")
+        try:
+            self._create_or_rebuild(connection)
+            _run_step(connection, "commit", "COMMIT")
+        except BaseException:
+            try:
+                connection.execute("ROLLBACK")
+            except sqlite3.Error:
+                logger.exception("Draft migration rollback failed")
+            raise
+
+    @staticmethod
+    def _create_or_rebuild(connection: sqlite3.Connection) -> None:
+        """Create a missing table; rebuild one that lacks the new column.
+
+        Checked again inside the transaction: another process may have
+        migrated between the unlocked check and BEGIN.
+        """
+        columns = _table_columns(connection)
+        if not columns:
+            _run_step(connection, "create the drafts table", SCHEMA)
+        elif NEW_COLUMN not in columns:
+            _rebuild(connection)
 
     def _query(self, sql: str, params: tuple = ()) -> list[tuple]:
         """Run a read-only statement and return its rows."""
@@ -262,6 +384,63 @@ class DraftStore:
     def _connect(self) -> sqlite3.Connection:
         """Open a connection with a busy timeout."""
         return sqlite3.connect(self._path, timeout=BUSY_TIMEOUT_SECONDS)
+
+
+def _run_step(
+    connection: sqlite3.Connection, step: str, sql: str, params: tuple = ()
+) -> sqlite3.Cursor:
+    """Run one migration statement; any failure names ``step``."""
+    try:
+        return connection.execute(sql, params)
+    except sqlite3.Error as error:
+        raise DraftMigrationError(step, f"{type(error).__name__}: {error}") from None
+
+
+def _table_columns(connection: sqlite3.Connection) -> list[str]:
+    """Column names of the drafts table (empty if it does not exist)."""
+    cursor = _run_step(connection, "inspect the drafts table", _TABLE_INFO_SQL)
+    return [row[1] for row in cursor]
+
+
+def _is_current(connection: sqlite3.Connection) -> bool:
+    """True if the drafts table already has the new schema."""
+    return NEW_COLUMN in _table_columns(connection)
+
+
+def _count_rows(connection: sqlite3.Connection, step: str, table: str) -> int:
+    """How many rows ``table`` holds; a failure names ``step``."""
+    cursor = _run_step(connection, step, f"SELECT COUNT(*) FROM {table}")
+    return cursor.fetchone()[0]
+
+
+def _rebuild(connection: sqlite3.Connection) -> None:
+    """Rebuild the old table with the new schema, keeping every row and id."""
+    sequence = _run_step(
+        connection,
+        "read the id counter",
+        "SELECT seq FROM sqlite_sequence WHERE name = ?",
+        (DRAFTS_TABLE,),
+    ).fetchone()
+    verify = "verify the copied rows"
+    expected = _count_rows(connection, verify, DRAFTS_TABLE)
+    for step, sql in _REBUILD_STEPS:
+        _run_step(connection, step, sql)
+        if step == STEP_COPY:
+            copied = _count_rows(connection, verify, REBUILT_TABLE)
+            if copied != expected:
+                raise DraftMigrationError(verify, f"expected {expected} rows")
+    if sequence is not None:  # keep ids from ever being reused, even if now empty
+        step = "restore the id counter"
+        params = (DRAFTS_TABLE,)
+        _run_step(
+            connection, step, "DELETE FROM sqlite_sequence WHERE name = ?", params
+        )
+        _run_step(
+            connection,
+            step,
+            "INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)",
+            (DRAFTS_TABLE, sequence[0]),
+        )
 
 
 def format_pending_summary(drafts: list[Draft]) -> str:

@@ -98,3 +98,7 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [CON-05] A decision based on shared state and the write that depends on it (e.g. read the claimed day, then set a flag) happen under one lock acquisition (from PR #27, 2026-11-19)
 - [OPS-02] Shell scripts run under `set -e` guard every command whose failure the script should report itself (`cmd || fallback`), so a tool error reaches the script's own failure message instead of a raw abort (from PR #30, 2026-11-19)
 - [OPS-03] A bounded wait loop checks its condition one last time at the deadline, so the final interval's result is never discarded (from PR #30, 2026-11-19)
+- [DB-01] A start-up check that usually finds nothing to do (such as a migration) uses a plain read and takes the write lock only when a change is needed, then rechecks inside the transaction (from PR #31, 2026-11-19)
+- [DB-02] Rebuilding an AUTOINCREMENT table restores its `sqlite_sequence` counter even when the table is empty (delete then insert, not update) (from PR #31, 2026-11-19)
+- [ERR-23] In a multi-step operation every statement, reads included, runs through the step runner so a failure names the real step (from PR #31, 2026-11-19)
+- [SEC-16] SQL values are bound as parameters, never interpolated into the statement text (from PR #31, 2026-11-19)
