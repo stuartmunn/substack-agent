@@ -17,6 +17,7 @@ from telegram.ext import Application
 
 from humblebrag.alerts import telegram_sender
 from humblebrag.approval import ApproveService, install_approve
+from humblebrag.backup import BackupJob, BackupService
 from humblebrag.binning import BinService, install_bin
 from humblebrag.bot import install_buttons
 from humblebrag.claude_client import ClaudeClient
@@ -59,6 +60,7 @@ class Runtime:
         )
         self.pipeline: RunPipeline | None = None
         self.scheduler: Scheduler | None = None
+        self.backup: BackupJob | None = None
 
     def setup(self, application: Application) -> None:
         """Create the services and install the button, redo and bin handlers."""
@@ -101,14 +103,18 @@ class Runtime:
             application, CommandService(queue, scheduler_state, config, coordinator)
         )
         self.scheduler = Scheduler(config, scheduler_state, coordinator.run_scheduled)
+        self.backup = BackupJob(config, BackupService(self._data_dir))
 
     async def start(self) -> None:
-        """Check the Substack session, then run the daily monitor and scheduler."""
+        """Check the Substack session, then run the monitor, scheduler and backup."""
         assert self.scheduler is not None, "setup() must run before start()"
+        assert self.backup is not None, "setup() must run before start()"
         scheduler = self.scheduler
+        backup = self.backup
         async with asyncio.TaskGroup() as group:
             group.create_task(self._session_checks())
             group.create_task(scheduler.run_forever())
+            group.create_task(backup.run_forever())
 
     async def _session_checks(self) -> None:
         """Check the session at startup, then daily (counting the startup check)."""
