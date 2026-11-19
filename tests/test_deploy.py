@@ -105,6 +105,33 @@ def test_it_waits_while_the_container_is_still_starting(stubs: Path) -> None:
     assert len([c for c in calls if c.startswith("docker inspect")]) == 4
 
 
+def test_a_container_that_turns_healthy_at_the_deadline_still_passes(
+    stubs: Path,
+) -> None:
+    """The check at the deadline counts: timeout 10s, polling every 5s, means
+    checks at 0, 5 and 10 seconds, and the third one sees healthy."""
+    result, calls = _deploy(
+        stubs,
+        STUB_STARTING_POLLS="2",
+        DEPLOY_HEALTH_TIMEOUT="10",
+        DEPLOY_POLL_SECONDS="5",
+    )
+    assert result.returncode == 0, result.stderr
+    assert len([c for c in calls if c.startswith("docker inspect")]) == 3
+
+
+def test_a_container_that_is_late_by_one_poll_fails(stubs: Path) -> None:
+    """One poll past the deadline is a failure, and the wait is bounded."""
+    result, calls = _deploy(
+        stubs,
+        STUB_STARTING_POLLS="3",
+        DEPLOY_HEALTH_TIMEOUT="10",
+        DEPLOY_POLL_SECONDS="5",
+    )
+    assert result.returncode != 0
+    assert len([c for c in calls if c.startswith("docker inspect")]) == 3
+
+
 def test_an_unhealthy_container_fails_the_deploy_and_skips_the_smoke_test(
     stubs: Path,
 ) -> None:
