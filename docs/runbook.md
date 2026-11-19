@@ -58,7 +58,7 @@ It does, in order, and stops at the first failure with `DEPLOY FAILED: ...`:
 The manual equivalent is `git pull --ff-only && docker compose up -d --build`.
 
 The `/data` volume survives updates: seeds, drafts and the schedule are kept.
-A restart never publishes anything (publishing needs Approve), and the daily
+A restart never hands anything to Substack (that needs Approve), and the daily
 run is claimed once per day, so restarting around 08:30 cannot double-run it.
 
 To roll back a bad version, check out the previous commit and rebuild directly
@@ -72,7 +72,7 @@ next deploy.
 `docker compose exec -T humblebrag python -m humblebrag.smoke` sends one
 Telegram message, `Sir Humblebrag reporting for duty`, to the configured chat,
 using the same token and chat id as the running agent. Exit code 0 means it was
-sent. It does nothing else: no run, no draft, nothing is published.
+sent. It does nothing else: no run, no draft, nothing reaches Substack.
 `./scripts/deploy.sh` runs it after every deploy; you can also run it by hand at
 any time to check the bot is reachable.
 
@@ -85,7 +85,7 @@ It cannot alert you on Telegram, because Telegram is what failed.
 
 You get this alert when the session has expired:
 `Substack session expired, refresh cookie`. Until it is fixed, Approve cannot
-publish (the draft stays pending, nothing is lost).
+hand the draft to Substack (it stays pending, nothing is lost).
 
 1. In a browser, log in to Substack as the publication's author.
 2. Open the developer tools, go to Application (Chrome) or Storage (Firefox),
@@ -144,33 +144,24 @@ Logs are one JSON object per line on stdout (`timestamp`, `level`, `logger`,
 
 ## Recover an orphaned Substack draft
 
-Publishing is three Substack calls: create a draft, prepare it, publish it
-(always with email sending off). If a later call fails, the earlier draft is
-left on Substack. You are alerted with one of:
+Approve makes one Substack call to create a draft and saves its ID at once.
+The agent never calls Substack's publish endpoint: it creates and updates
+drafts only, and you publish from the editor link it sends. If a step after the
+draft was created fails, you are alerted with the step name, the Substack draft
+ID and the editor link, e.g.
+`Substack draft <id> exists (<link>) for draft <n>, but step '...' failed: ...`.
 
-- `... Nothing was published; orphaned draft ID: <id>`: the draft exists but
-  is **not** live.
-- `... the post may be live. Check Substack before retrying. Draft ID: <id>`:
-  the publish call was made, so it may be live.
-
-The log line is `Orphaned Substack draft left by a failed publish: <id>`
-(or `Draft <id> may be published or orphaned`).
-
-1. In Substack, open the publication dashboard, Posts, and look in both
-   **Published** and **Drafts** for the post (match the title, or the ID in
-   the draft's URL).
-2. If it is **live**: leave it. In Telegram, tap **Bin** on the pending draft
-   so it cannot be published a second time. (If the alert said the draft was
-   not marked published, do **not** tap Approve again.)
-3. If it is only a **draft**: delete it in Substack.
-4. Then decide what to do with the local draft, which is still pending with
-   its buttons active:
-   - tap **Approve** to publish again (this creates a fresh Substack draft;
-     the orphan from step 3 is why it must be deleted first, or you will
-     have two), or
-   - tap **Redo** / **Bin** as normal. Bin returns the seed to the front of
-     the queue.
+1. Open the link (or Substack, Posts, Drafts) and check the draft is there.
+2. The local draft may still be pending with its buttons active. Tapping
+   **Approve** again updates the same Substack draft (it never creates a
+   second one) and completes the handover.
+3. Or publish the Substack draft yourself, then tap **Bin** on the pending
+   local draft. Bin does not touch Substack, so delete any draft you do not
+   want there.
+4. If the alert said the seed was not marked used, mark it by hand in
+   `seed.md`.
 5. If the failure was an expired session, fix that first (see
    [Refresh the Substack cookie](#refresh-the-substack-cookie)).
 
-Nothing is ever emailed to subscribers: publish always uses `send=False`.
+If creating the draft itself failed, nothing exists on Substack: the local
+draft stays pending, and you can tap **Approve** again, **Redo** or **Bin**.

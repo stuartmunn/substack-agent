@@ -3,8 +3,8 @@
 ## Purpose
 A Dockerised Python agent that writes one parody LinkedIn-style Substack post
 a day from a seed in `/data/seed.md`, sends it to Stuart on Telegram
-(Approve / Redo / Bin) and publishes only on Approve. Substack publishing
-always uses `send=False`, so no email is ever sent to subscribers.
+(Approve / Redo / Bin). Approve creates a Substack draft and sends Stuart the
+editor link. The agent never calls Substack's publish endpoint. It creates and updates drafts only. Publishing is done by Stuart in the Substack editor.
 
 ## Local run steps
 1. Use Python 3.12 and create a virtualenv: `python3.12 -m venv .venv && . .venv/bin/activate`

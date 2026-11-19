@@ -1,4 +1,4 @@
-"""Tests for the Approve handler (SA-34 acceptance criteria).
+"""Tests for the Approve handover (SA-41 acceptance criteria).
 
 Real DraftStore and SeedQueue in a temp dir; the Substack publisher is faked
 (or, once, the real publisher over a fake API). Nothing is ever published.
@@ -12,25 +12,27 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from substack.exceptions import SubstackAPIException
 
 from humblebrag.alerts import configure_alerts
 from humblebrag.approval import (
     FAILED_TEXT,
+    HANDED_OVER_TEXT,
     IN_FLIGHT_TEXT,
-    MAY_BE_LIVE_NOTE,
     ApproveService,
     install_approve,
 )
 from humblebrag.buttons import ACTIONS_KEY, ALREADY_HANDLED_TEXT
 from humblebrag.config import load_config
-from humblebrag.drafts import STATUS_PENDING, STATUS_PUBLISHED, DraftStore
+from humblebrag.drafts import STATUS_HANDED_OVER, STATUS_PENDING, DraftStore
 from humblebrag.preview import ACTION_APPROVE
-from humblebrag.publisher import PublishError, SubstackError, SubstackPublisher
+from humblebrag.publisher import DraftError, SubstackAuthError, SubstackPublisher
 from humblebrag.seed_queue import SeedQueue
 
 CHAT = 12345
 TODAY = date(2026, 11, 18)
-URL = "https://humblebrag.substack.com/p/my-post"
+SUBSTACK_ID = "5001"
+EDITOR = "https://humblebrag.substack.com/publish/post/5001"
 SEEDS = "- [ ] First seed\n- [ ] Second seed\n"
 ENV = {
     "TELEGRAM_BOT_TOKEN": "123456:TESTTOKEN",
@@ -63,9 +65,12 @@ class FakeBot:
         self.sent: list[str] = []
         self.edits: list[dict[str, Any]] = []
         self.edit_error: Exception | None = None
+        self.send_error: Exception | None = None
 
     async def send_message(self, **kwargs: Any) -> None:
-        """Record a sent message's text."""
+        """Record a sent message's text, or raise the configured error."""
+        if self.send_error is not None:
+            raise self.send_error
         self.sent.append(kwargs["text"])
 
     async def edit_message_reply_markup(self, **kwargs: Any) -> None:
@@ -76,22 +81,42 @@ class FakeBot:
 
 
 class FakePublisher:
-    """Stands in for SubstackPublisher.publish."""
+    """Stands in for SubstackPublisher: drafts only, publishing is forbidden."""
 
     def __init__(self) -> None:
         """Succeed by default."""
-        self.calls: list[tuple[str, str, str]] = []
+        self.created: list[tuple[str, str, str]] = []
+        self.updated: list[tuple[str, str, str, str]] = []
         self.error: Exception | None = None
         self.gate: asyncio.Event | None = None
 
-    async def publish(self, title: str, subtitle: str, body: str) -> str:
+    async def create_draft(self, title: str, subtitle: str, body: str) -> str:
         """Record the call, optionally wait on a gate, then succeed or fail."""
-        self.calls.append((title, subtitle, body))
+        self.created.append((title, subtitle, body))
         if self.gate is not None:
             await self.gate.wait()
         if self.error is not None:
             raise self.error
-        return URL
+        return SUBSTACK_ID
+
+    async def update_draft(
+        self, draft_id: str, title: str, subtitle: str, body: str
+    ) -> None:
+        """Record the call, or fail."""
+        self.updated.append((draft_id, title, subtitle, body))
+        if self.error is not None:
+            raise self.error
+
+    @staticmethod
+    def editor_url(draft_id: str) -> str:
+        """The editor link for a draft."""
+        return f"https://humblebrag.substack.com/publish/post/{draft_id}"
+
+    def __getattr__(self, name: str) -> Any:
+        """Any publish-like call is a test failure."""
+        if "publish" in name:
+            raise AssertionError(f"the agent must never call {name}")
+        raise AttributeError(name)
 
 
 class Harness:
@@ -128,9 +153,13 @@ class Harness:
             self.draft,
         )
 
-    def status(self) -> str:
-        """The draft's stored status."""
-        return self.store.get(self.draft.id).status
+    def stored(self):
+        """The draft as stored now."""
+        return self.store.get(self.draft.id)
+
+    def seed_used(self) -> bool:
+        """True if the seed line is marked used today."""
+        return "First seed (used 2026-11-18)" in self.seed_path.read_text()
 
 
 @pytest.fixture
@@ -139,304 +168,403 @@ def h(tmp_path: Path) -> Harness:
     return Harness(tmp_path)
 
 
-# AC1: publishes via SA-32 with subscriber email off
+def _break(monkeypatch: pytest.MonkeyPatch, target: object, name: str) -> None:
+    """Make ``target.name`` raise a RuntimeError."""
+
+    def boom(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError("it broke")
+
+    monkeypatch.setattr(target, name, boom)
 
 
-async def test_approve_publishes_the_drafts_content(h: Harness) -> None:
-    """AC1: the draft's title, subtitle and body go to the publisher."""
+# AC1: a Substack draft is created from the stored content, ID saved at once
+
+
+async def test_approve_creates_a_draft_from_the_stored_content(h: Harness) -> None:
+    """AC1: title, subtitle and body go to Substack as a draft."""
     await h.tap()
-    assert h.publisher.calls == [("The Title", "The Sub", "# Body")]
+    assert h.publisher.created == [("The Title", "The Sub", "# Body")]
 
 
-async def test_approve_uses_the_real_publisher_with_send_false(
+async def test_the_substack_id_is_saved_right_after_creation(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC1: even if the status write fails, the ID is already stored."""
+    _break(monkeypatch, h.store, "mark_handed_over")
+    await h.tap()
+    stored = h.stored()
+    assert stored.status == STATUS_PENDING
+    assert stored.substack_draft_id == SUBSTACK_ID
+
+
+# AC2: marked handed over with the ID and link; seed used today
+
+
+async def test_success_marks_the_draft_handed_over_with_id_and_link(
     h: Harness,
 ) -> None:
-    """AC1: through the real SubstackPublisher, publish_draft gets send=False."""
-    calls: list[tuple[str, dict[str, Any]]] = []
-
-    class Api:
-        def create_draft_from_markdown(self, *_a: Any, **_k: Any) -> dict[str, Any]:
-            return {"draft": {"id": 9}}
-
-        def prepublish_draft(self, *_a: Any, **_k: Any) -> dict[str, Any]:
-            return {}
-
-        def publish_draft(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-            calls.append(("publish", kwargs))
-            return {"canonical_url": URL}
-
-    publisher = SubstackPublisher(load_config(ENV), lambda **_k: Api())
-    service = ApproveService(h.store, h.queue, publisher)
-    update = SimpleNamespace(
-        effective_chat=SimpleNamespace(id=CHAT), callback_query=None
-    )
-    await service.on_approve_tap(
-        update,  # type: ignore[arg-type]
-        SimpleNamespace(bot=h.bot),  # type: ignore[arg-type]
-        h.draft,
-    )
-    assert calls == [("publish", {"send": False})]
-    assert h.bot.sent == [f"Published: {URL}"]
-
-
-# AC2: success -> seed used today, draft published, URL replied
+    """AC2: status, Substack ID and editor link are stored."""
+    await h.tap()
+    stored = h.stored()
+    assert stored.status == STATUS_HANDED_OVER
+    assert stored.substack_draft_id == SUBSTACK_ID
+    assert stored.substack_url == EDITOR
 
 
 async def test_success_marks_the_seed_used_with_todays_date(h: Harness) -> None:
-    """AC2: the seed line is marked used on today's date."""
+    """AC2: the seed line is ticked with today's date and the reservation freed."""
     await h.tap()
-    text = h.seed_path.read_text()
-    assert "2026-11-18" in text
-    assert text != SEEDS
-    nxt = h.queue.pick("2")
-    assert nxt is not None
-    assert nxt.text == "Second seed"
+    assert h.seed_used()
+    assert h.queue._load_reservations() == {}
 
 
-async def test_success_marks_the_draft_published_with_its_url(h: Harness) -> None:
-    """AC2: the draft is published and stores the post URL."""
+# AC3: reply with the editor link; buttons removed
+
+
+async def test_success_replies_with_the_editor_link(h: Harness) -> None:
+    """AC3: Stuart gets a link that opens the draft in the Substack editor."""
     await h.tap()
-    stored = h.store.get(h.draft.id)
-    assert stored.status == STATUS_PUBLISHED
-    assert stored.substack_url == URL
-
-
-async def test_success_replies_with_the_post_url(h: Harness) -> None:
-    """AC2: the bot replies with the URL."""
-    await h.tap()
-    assert h.bot.sent == [f"Published: {URL}"]
+    assert h.bot.sent == [HANDED_OVER_TEXT.format(url=EDITOR)]
 
 
 async def test_success_removes_the_old_buttons(h: Harness) -> None:
-    """The tapped message loses its buttons."""
-    await h.tap(message_id=77)
-    assert h.bot.edits == [{"chat_id": CHAT, "message_id": 77, "reply_markup": None}]
+    """AC3: Approve, Redo and Bin come off the preview message."""
+    await h.tap(message_id=40)
+    assert h.bot.edits == [
+        {"chat_id": CHAT, "message_id": 40, "reply_markup": None},
+    ]
 
 
-async def test_a_button_removal_failure_never_hides_the_url(
-    h: Harness, caplog: pytest.LogCaptureFixture
-) -> None:
-    """ERR-15: cleanup errors are logged, the URL reply still goes out first."""
-    h.bot.edit_error = RuntimeError("odd")
-    await h.tap()
-    assert h.bot.sent == [f"Published: {URL}"]
-    assert "Could not remove old buttons" in caplog.text
-
-
-# AC3: failure -> draft pending, error sent to Stuart, buttons stay
-
-
-@pytest.mark.parametrize(
-    "error",
-    [
-        PublishError(
-            "Substack publish failed (X). No draft was created.",
-            None,
-            maybe_published=False,
-        ),
-        SubstackError("Substack could not be reached"),
-    ],
-)
-async def test_failure_keeps_the_draft_pending_and_sends_the_error(
-    h: Harness, error: SubstackError
-) -> None:
-    """AC3: pending, seed untouched, error text sent, buttons not removed."""
-    h.publisher.error = error
-    await h.tap()
-    assert h.status() == STATUS_PENDING
-    assert h.seed_path.read_text() == SEEDS
-    assert h.bot.sent == [FAILED_TEXT.format(detail=str(error))]
-    assert h.bot.edits == []
-
-
-async def test_failure_leaves_the_seed_reserved_for_a_retry(h: Harness) -> None:
-    """AC3: after a failed publish the same draft can still be approved."""
-    h.publisher.error = SubstackError("down")
-    await h.tap()
-    h.publisher.error = None
-    await h.tap()
-    assert h.status() == STATUS_PUBLISHED
-    assert h.bot.sent[-1] == f"Published: {URL}"
-
-
-async def test_a_failure_that_may_have_gone_live_warns_before_a_retry(
-    h: Harness,
-) -> None:
-    """AC3: with maybe_published the message says to check Substack first."""
-    error = PublishError("publish failed after the call", "9", maybe_published=True)
-    h.publisher.error = error
-    await h.tap()
-    assert h.bot.sent[0].endswith(MAY_BE_LIVE_NOTE)
-    assert h.status() == STATUS_PENDING
-
-
-async def test_a_typed_failure_is_not_alerted_twice(
+async def test_a_button_removal_failure_never_hides_the_link(
     h: Harness, alerts: list[str]
 ) -> None:
-    """The publisher already alerted a typed failure; the handler does not repeat it."""
-    h.publisher.error = SubstackError("down")
+    """ERR-15: a failed removal is logged; the handover still completes."""
+    h.bot.edit_error = RuntimeError("telegram said no")
     await h.tap()
-    assert alerts == []
+    assert h.bot.sent == [HANDED_OVER_TEXT.format(url=EDITOR)]
+    assert h.stored().status == STATUS_HANDED_OVER
 
 
-async def test_an_untyped_failure_alerts_and_keeps_the_draft_pending(
-    h: Harness, alerts: list[str]
-) -> None:
-    """ERR-01: a surprise exception is alerted, reported, and leaves the draft pending."""
-    h.publisher.error = RuntimeError("kaboom")
+# AC4 + AC5: never publishes, no Notes (static checks live in test_publish.py)
+
+
+async def test_a_full_handover_never_touches_publishing(h: Harness) -> None:
+    """AC4: the fake publisher raises if any publish-like call is made."""
     await h.tap()
-    assert h.status() == STATUS_PENDING
-    assert len(alerts) == 1
-    assert "RuntimeError: kaboom" in alerts[0]
-    assert h.bot.sent == [FAILED_TEXT.format(detail="RuntimeError: kaboom")]
+    assert h.stored().status == STATUS_HANDED_OVER
 
 
-async def test_a_store_read_failure_never_publishes(
-    h: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """If the draft cannot be re-read nothing is published."""
-
-    def broken(_id: int) -> None:
-        raise RuntimeError("db gone")
-
-    monkeypatch.setattr(h.store, "get", broken)
-    await h.tap()
-    assert h.publisher.calls == []
-    assert len(alerts) == 1
+# AC6: a double tap creates one draft
 
 
-# AC4: double tap -> one publish
-
-
-async def test_a_concurrent_double_tap_publishes_once(h: Harness) -> None:
-    """AC4: a second tap while publishing is told to hold on and does not publish."""
+async def test_a_concurrent_double_tap_creates_one_draft(h: Harness) -> None:
+    """AC6: the second tap during the first is told to hold on."""
     h.publisher.gate = asyncio.Event()
     first = asyncio.create_task(h.tap())
     await asyncio.sleep(0)
-    await asyncio.sleep(0.05)  # first tap is now inside publish()
+    await asyncio.sleep(0)
     await h.tap()
-    assert h.bot.sent == [IN_FLIGHT_TEXT]
+    assert IN_FLIGHT_TEXT in h.bot.sent
     h.publisher.gate.set()
     await first
-    assert len(h.publisher.calls) == 1
-    assert h.bot.sent[-1] == f"Published: {URL}"
+    assert len(h.publisher.created) == 1
 
 
-async def test_many_simultaneous_taps_publish_once(h: Harness) -> None:
-    """AC4: five taps at once still make exactly one publish call."""
-    await asyncio.gather(*(h.tap() for _ in range(5)))
-    assert len(h.publisher.calls) == 1
-    assert h.status() == STATUS_PUBLISHED
+async def test_many_simultaneous_taps_create_one_draft(h: Harness) -> None:
+    """AC6: ten taps at once still make one Substack draft."""
+    await asyncio.gather(*(h.tap() for _ in range(10)))
+    assert len(h.publisher.created) == 1
 
 
 async def test_a_tap_after_success_is_already_handled(h: Harness) -> None:
-    """AC4: a later tap on the same draft does not publish again."""
+    """AC6: a later tap neither creates nor updates anything."""
     await h.tap()
     await h.tap()
-    assert len(h.publisher.calls) == 1
     assert h.bot.sent[-1] == ALREADY_HANDLED_TEXT
+    assert len(h.publisher.created) == 1
+    assert h.publisher.updated == []
 
 
-async def test_a_binned_draft_is_not_published(h: Harness) -> None:
-    """A draft binned in the meantime is "Already handled.", never published."""
+async def test_a_binned_draft_is_not_handed_over(h: Harness) -> None:
+    """AC6: a draft that is no longer pending creates nothing."""
     h.store.mark_binned(h.draft.id)
     await h.tap()
-    assert h.publisher.calls == []
+    assert h.publisher.created == []
     assert h.bot.sent == [ALREADY_HANDLED_TEXT]
 
 
-# Post-publish bookkeeping failures never hide the live URL
+# AC7: a pending draft that already has a Substack ID is updated, not recreated
 
 
-async def test_a_mark_published_failure_still_replies_with_the_url_and_alerts(
-    h: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+async def test_a_pending_draft_with_an_id_is_updated_not_recreated(
+    h: Harness,
 ) -> None:
-    """The post is live: reply with the URL, alert, and warn not to tap again."""
-
-    def broken(_id: int, _url: str) -> None:
-        raise RuntimeError("disk full")
-
-    monkeypatch.setattr(h.store, "mark_published", broken)
+    """AC7: after a crash the existing Substack draft is updated and handed over."""
+    h.store.set_substack_draft_id(h.draft.id, "777")
     await h.tap()
-    assert h.bot.sent == [f"Published: {URL}"]
-    assert len(alerts) == 1
-    assert "do NOT tap Approve again" in alerts[0]
-    assert URL in alerts[0]
+    assert h.publisher.created == []
+    assert h.publisher.updated == [("777", "The Title", "The Sub", "# Body")]
+    stored = h.stored()
+    assert stored.status == STATUS_HANDED_OVER
+    assert stored.substack_draft_id == "777"
+    assert stored.substack_url == FakePublisher.editor_url("777")
+    assert h.seed_used()
 
 
-async def test_a_seed_failure_still_replies_with_the_url_and_alerts(
-    h: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The draft is published but the seed could not be marked: alert, keep the URL."""
-
-    def broken(_draft_id: str) -> None:
-        raise RuntimeError("seed.md locked")
-
-    monkeypatch.setattr(h.queue, "approve", broken)
-    await h.tap()
-    assert h.status() == STATUS_PUBLISHED
-    assert h.bot.sent == [f"Published: {URL}"]
-    assert "was not marked used" in alerts[0]
-
-
-async def test_draft_is_marked_published_before_the_seed_is_touched(
+async def test_a_retry_after_a_failed_status_write_updates_the_draft(
     h: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Ordering: a seed failure cannot leave a pending draft that republishes."""
-    seen: list[str] = []
-
-    def spy(_draft_id: str) -> None:
-        seen.append(h.status())
-
-    monkeypatch.setattr(h.queue, "approve", spy)
+    """AC7: a second tap after a failed status write does not create another."""
+    with monkeypatch.context() as broken:
+        _break(broken, h.store, "mark_handed_over")
+        await h.tap()
     await h.tap()
-    assert seen == [STATUS_PUBLISHED]
+    assert len(h.publisher.created) == 1
+    assert h.publisher.updated == [(SUBSTACK_ID, "The Title", "The Sub", "# Body")]
+    assert h.stored().status == STATUS_HANDED_OVER
+
+
+async def test_a_retry_updates_even_if_the_id_was_never_stored(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC7/IDEM-01: the in-memory record stops a duplicate when the store is down."""
+    with monkeypatch.context() as broken:
+        _break(broken, h.store, "set_substack_draft_id")
+        _break(broken, h.store, "mark_handed_over")
+        await h.tap()
+    await h.tap()
+    assert len(h.publisher.created) == 1
+    assert len(h.publisher.updated) == 1
+
+
+async def test_the_memory_is_pruned_once_the_store_records_the_handover(
+    h: Harness,
+) -> None:
+    """Housekeeping: nothing lingers after a clean handover."""
+    await h.tap()
+    assert h.service._created == {}
+
+
+# AC8: creating fails -> alert with step and cause; stays pending; nothing used
+
+
+async def test_a_failed_create_alerts_with_step_and_cause(
+    h: Harness, alerts: list[str]
+) -> None:
+    """AC8: one alert names the step and the cause."""
+    h.publisher.error = DraftError("Substack draft creating failed (KeyError).")
+    await h.tap()
+    assert len(alerts) == 1
+    assert "create Substack draft" in alerts[0]
+    assert "KeyError" in alerts[0]
+
+
+async def test_a_failed_create_keeps_the_draft_pending_and_unmarked(
+    h: Harness,
+) -> None:
+    """AC8: pending, no ID, seed untouched and still reserved."""
+    h.publisher.error = DraftError("boom")
+    await h.tap()
+    stored = h.stored()
+    assert stored.status == STATUS_PENDING
+    assert stored.substack_draft_id is None
+    assert not h.seed_used()
+    assert h.queue._load_reservations() == {str(h.draft.id): "First seed"}
+
+
+async def test_a_failed_create_leaves_the_buttons_and_tells_stuart(
+    h: Harness,
+) -> None:
+    """AC8: buttons stay active (not removed) and the error is sent."""
+    h.publisher.error = DraftError("boom")
+    await h.tap()
+    assert h.bot.edits == []
+    assert h.bot.sent == [FAILED_TEXT.format(detail="DraftError: boom")]
+
+
+async def test_a_failed_create_can_be_retried(h: Harness) -> None:
+    """AC8: the draft is still approvable once Substack recovers."""
+    h.publisher.error = DraftError("boom")
+    await h.tap()
+    h.publisher.error = None
+    await h.tap()
+    assert h.stored().status == STATUS_HANDED_OVER
+
+
+async def test_a_failed_update_alerts_with_step_id_and_link(
+    h: Harness, alerts: list[str]
+) -> None:
+    """AC8: an update failure names its step and keeps the draft pending."""
+    h.store.set_substack_draft_id(h.draft.id, "777")
+    h.publisher.error = DraftError("boom")
+    await h.tap()
+    assert "update Substack draft" in alerts[0]
+    assert "777" in alerts[0]
+    assert FakePublisher.editor_url("777") in alerts[0]
+    assert h.stored().status == STATUS_PENDING
+
+
+async def test_a_session_failure_is_not_alerted_twice(
+    h: Harness, alerts: list[str]
+) -> None:
+    """The publisher already alerts on session errors; Approve adds none."""
+    h.publisher.error = SubstackAuthError("Substack session expired")
+    await h.tap()
+    assert alerts == []
+    assert h.stored().status == STATUS_PENDING
+    assert "session expired" in h.bot.sent[-1]
+
+
+async def test_an_untyped_create_failure_alerts_and_keeps_the_draft_pending(
+    h: Harness, alerts: list[str]
+) -> None:
+    """ERR-18: a surprise exception is alerted with the step and left pending."""
+    h.publisher.error = RuntimeError("library changed")
+    await h.tap()
+    assert "create Substack draft" in alerts[0]
+    assert "library changed" in alerts[0]
+    assert h.stored().status == STATUS_PENDING
+
+
+async def test_a_store_read_failure_creates_nothing(
+    h: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed re-read must not create a draft blind."""
+    _break(monkeypatch, h.store, "get")
+    await h.tap()
+    assert h.publisher.created == []
+    assert len(alerts) == 1
+
+
+# AC9: created but a later step fails -> alert with step, Substack ID, link
+
+
+@pytest.mark.parametrize(
+    ("method", "owner", "step"),
+    [
+        ("set_substack_draft_id", "store", "save Substack draft ID"),
+        ("mark_handed_over", "store", "save handed-over status"),
+        ("approve", "queue", "mark seed used"),
+    ],
+)
+async def test_a_later_step_failure_alerts_with_step_id_and_link(
+    h: Harness,
+    alerts: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    owner: str,
+    step: str,
+) -> None:
+    """AC9: the alert names the failed step, the Substack ID and the link."""
+    _break(monkeypatch, getattr(h, owner), method)
+    await h.tap()
+    assert len(alerts) == 1
+    assert f"step '{step}' failed" in alerts[0]
+    assert SUBSTACK_ID in alerts[0]
+    assert EDITOR in alerts[0]
+    assert "it broke" in alerts[0]
+
+
+async def test_a_failed_reply_alerts_with_step_id_and_link(
+    h: Harness, alerts: list[str]
+) -> None:
+    """AC9: if the reply cannot be sent, the alert still carries the link."""
+    h.bot.send_error = RuntimeError("telegram down")
+    await h.tap()
+    assert "step 'send reply' failed" in alerts[0]
+    assert SUBSTACK_ID in alerts[0]
+    assert EDITOR in alerts[0]
+    assert h.stored().status == STATUS_HANDED_OVER
+    assert h.bot.edits  # buttons still cleared (ERR-20)
+
+
+async def test_a_seed_failure_does_not_skip_the_reply(
+    h: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC9: the link reaches Stuart even when marking the seed failed."""
+    _break(monkeypatch, h.queue, "approve")
+    await h.tap()
+    assert h.bot.sent == [HANDED_OVER_TEXT.format(url=EDITOR)]
+    assert h.stored().status == STATUS_HANDED_OVER
+
+
+async def test_several_failures_are_reported_in_one_alert(
+    h: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC9: one alert lists every failed step."""
+    _break(monkeypatch, h.store, "mark_handed_over")
+    _break(monkeypatch, h.queue, "approve")
+    await h.tap()
+    assert len(alerts) == 1
+    assert "save handed-over status" in alerts[0]
+    assert "mark seed used" in alerts[0]
+
+
+# The real publisher over a fake API: drafts only, never publish
+
+
+class RecordingApi:
+    """A Substack API that records calls and refuses anything that publishes."""
+
+    def __init__(self, **_kwargs: Any) -> None:
+        """Start empty."""
+        self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
+
+    def create_draft_from_markdown(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Record a draft creation."""
+        self.calls.append(("create", args, kwargs))
+        return {"draft": {"id": 5001}}
+
+    def update_draft_from_markdown(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Record a body update."""
+        self.calls.append(("update", args, kwargs))
+        return {}
+
+    def put_draft(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Record a field update."""
+        self.calls.append(("put", args, kwargs))
+        return {}
+
+    def __getattr__(self, name: str) -> Any:
+        """Publishing, prepublishing, scheduling or Notes are forbidden."""
+        raise AssertionError(f"the agent must never call {name}")
+
+
+async def test_the_real_publisher_creates_a_draft_and_nothing_else(
+    tmp_path: Path,
+) -> None:
+    """AC1/AC4/AC5: Approve over the real publisher makes exactly one create call."""
+    api = RecordingApi()
+    publisher = SubstackPublisher(load_config(ENV), lambda **_k: api)
+    harness = Harness(tmp_path)
+    harness.service = ApproveService(harness.store, harness.queue, publisher)
+    await harness.tap()
+    assert [name for name, _a, _k in api.calls] == ["create"]
+    assert harness.stored().substack_url == EDITOR
+
+
+async def test_a_substack_error_from_the_real_publisher_is_alerted_once(
+    tmp_path: Path, alerts: list[str]
+) -> None:
+    """AC8 end to end: a library error becomes one alert and a pending draft."""
+
+    class FailingApi(RecordingApi):
+        def create_draft_from_markdown(self, *a: Any, **k: Any) -> dict[str, Any]:
+            raise SubstackAPIException(500, "boom")
+
+    api = FailingApi()
+    publisher = SubstackPublisher(load_config(ENV), lambda **_k: api)
+    harness = Harness(tmp_path)
+    harness.service = ApproveService(harness.store, harness.queue, publisher)
+    await harness.tap()
+    assert len(alerts) == 1
+    assert "create Substack draft" in alerts[0]
+    assert harness.stored().status == STATUS_PENDING
 
 
 def test_install_registers_the_approve_action() -> None:
-    """The Approve button is wired to the service."""
+    """The Approve button is routed to the service."""
     application = SimpleNamespace(bot_data={})
-    service = ApproveService(None, None, None)  # type: ignore[arg-type]
+    service = SimpleNamespace(on_approve_tap=lambda *a: None)
     install_approve(application, service)  # type: ignore[arg-type]
-    assert application.bot_data[ACTIONS_KEY][ACTION_APPROVE] == service.on_approve_tap
-
-
-async def test_a_failed_published_reply_still_alerts_with_the_url_and_clears_buttons(
-    h: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """PR-Agent: if the URL reply cannot be sent, alert with the URL; no crash."""
-
-    async def broken(**_kwargs: Any) -> None:
-        raise RuntimeError("telegram down")
-
-    monkeypatch.setattr(h.bot, "send_message", broken)
-    await h.tap()
-    assert h.status() == STATUS_PUBLISHED
-    assert len(alerts) == 1
-    assert URL in alerts[0]
-    assert "reply to you could not be sent" in alerts[0]
-    assert len(h.bot.edits) == 1
-
-
-async def test_a_second_tap_after_a_failed_status_write_does_not_republish(
-    h: Harness, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """PR-Agent: even if mark_published failed, this process never publishes twice."""
-
-    def broken(_id: int, _url: str) -> None:
-        raise RuntimeError("disk full")
-
-    monkeypatch.setattr(h.store, "mark_published", broken)
-    await h.tap()
-    assert h.status() == STATUS_PENDING  # the write really failed
-    await h.tap()
-    assert len(h.publisher.calls) == 1
-    assert h.bot.sent[-1] == ALREADY_HANDLED_TEXT
-
-
-async def test_the_published_memory_is_pruned_once_the_store_records_it(
-    h: Harness,
-) -> None:
-    """PR-Agent: the in-memory set only keeps drafts whose status write failed."""
-    await h.tap()
-    assert h.service._published == set()
+    assert ACTION_APPROVE in application.bot_data[ACTIONS_KEY]

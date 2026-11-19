@@ -17,13 +17,13 @@ from typing import Any
 import pytest
 
 from humblebrag.alerts import configure_alerts, telegram_sender
-from humblebrag.approval import ApproveService
+from humblebrag.approval import HANDED_OVER_TEXT, ApproveService
 from humblebrag.claude_client import ClaudeAPIError
 from humblebrag.config import Config, load_config
 from humblebrag.drafts import (
     STATUS_BINNED,
+    STATUS_HANDED_OVER,
     STATUS_PENDING,
-    STATUS_PUBLISHED,
     Draft,
     DraftStore,
     RunGate,
@@ -47,7 +47,7 @@ from humblebrag.seed_queue import SeedQueue
 
 CHAT = 12345
 TODAY = date(2026, 11, 18)
-URL = "https://humblebrag.substack.com/p/my-post"
+EDITOR_URL = "https://humblebrag.substack.com/publish/post/77"
 SEEDS = "- [ ] First seed\n- [ ] Second seed\n"
 ENV = {
     "TELEGRAM_BOT_TOKEN": "123456:TESTTOKEN",
@@ -137,15 +137,9 @@ class FakeSubstackApi:
         self.calls.append(("create", kwargs))
         return {"draft": {"id": 77}}
 
-    def prepublish_draft(self, *_a: Any, **_k: Any) -> dict[str, Any]:
-        """Record the prepublish call."""
-        self.calls.append(("prepublish", {}))
-        return {}
-
-    def publish_draft(self, *_a: Any, **kwargs: Any) -> dict[str, Any]:
-        """Record the publish call."""
-        self.calls.append(("publish", kwargs))
-        return {"canonical_url": URL}
+    def __getattr__(self, name: str) -> Any:
+        """Publishing, prepublishing, scheduling or Notes are forbidden."""
+        raise AssertionError(f"the agent must never call {name}")
 
 
 class Rig:
@@ -256,18 +250,21 @@ async def test_the_run_invents_a_seed_when_none_are_unused(tmp_path: Path) -> No
     assert rig.reservations() == {str(draft.id): "A lukewarm cup of tea"}
 
 
-async def test_the_full_flow_approve_publishes_once_with_send_false(rig: Rig) -> None:
-    """End to end: preview, then Approve publishes (send=False) and uses the seed."""
+async def test_the_full_flow_approve_hands_over_one_draft_and_never_publishes(
+    rig: Rig,
+) -> None:
+    """End to end: preview, then Approve creates one Substack draft and uses the seed."""
     draft = await rig.pipeline.run()
     assert draft is not None
     rig.assert_nothing_published()
     await rig.tap_approve(draft)
-    assert [name for name, _ in rig.api.calls] == ["create", "prepublish", "publish"]
-    assert rig.api.calls[-1] == ("publish", {"send": False})
-    assert rig.store.get(draft.id).status == STATUS_PUBLISHED
+    assert [name for name, _ in rig.api.calls] == ["create"]
+    stored = rig.store.get(draft.id)
+    assert stored.status == STATUS_HANDED_OVER
+    assert stored.substack_draft_id == "77"
     assert "2026-11-18" in rig.seed_path.read_text()
     assert rig.reservations() == {}
-    assert rig.bot.messages[-1]["text"] == f"Published: {URL}"
+    assert rig.bot.messages[-1]["text"] == HANDED_OVER_TEXT.format(url=EDITOR_URL)
 
 
 async def test_a_run_is_paused_when_too_many_drafts_are_pending(
@@ -509,7 +506,7 @@ async def test_the_pipeline_never_calls_the_publisher(
     assert not hasattr(rig.pipeline, "_publisher")
     called: list[str] = []
     monkeypatch.setattr(
-        rig.publisher, "publish", lambda *_a, **_k: called.append("publish")
+        rig.publisher, "create_draft", lambda *_a, **_k: called.append("create")
     )
     await rig.pipeline.run()
     assert called == []

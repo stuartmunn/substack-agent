@@ -1,8 +1,9 @@
 """The only module that talks to python-substack (an unofficial API).
 
-SA-31 covers the session (cookie auth, ``check_session()``); SA-32 adds
-``publish()``, which only ever publishes to the web: ``send`` is always False,
-so no email goes to subscribers.
+SA-31 covers the session (cookie auth, ``check_session()``). SA-41 adds
+``create_draft()`` and ``update_draft()``. The agent never calls Substack's
+publish endpoint: it creates and updates drafts only, and Stuart publishes in
+the Substack editor. No Substack Notes are created either.
 """
 
 import asyncio
@@ -29,9 +30,7 @@ RUNBOOK_URL = (
     "https://github.com/stuartmunn/substack-agent/blob/main/docs/runbook.md"
     "#refresh-the-substack-cookie"
 )
-PUBLISH_ALERT_EVENT = "substack publish"
-# Hard rule: never email subscribers. Not a parameter, not configurable.
-SEND_EMAIL = False
+EDITOR_PATH = "/publish/post/{draft_id}"
 SESSION_ALERT_EVENT = "substack session"
 CHECK_ALERT_EVENT = "substack"
 # Raised by python-substack when the cookie logs in as nobody or the wrong user.
@@ -48,21 +47,8 @@ class SubstackError(Exception):
     """A Substack call failed for a reason other than an expired session."""
 
 
-class PublishError(SubstackError):
-    """Publishing failed. Never retried automatically: the post may be live.
-
-    ``draft_id`` is the Substack draft that was created (if any) and may be left
-    orphaned; ``maybe_published`` is True when the publish call was made, so the
-    post could already be public and must be checked by hand before retrying.
-    """
-
-    def __init__(
-        self, message: str, draft_id: str | None, *, maybe_published: bool
-    ) -> None:
-        """Keep the draft id and whether the post may be live."""
-        super().__init__(message)
-        self.draft_id = draft_id
-        self.maybe_published = maybe_published
+class DraftError(SubstackError):
+    """Creating or updating a Substack draft failed; nothing was published."""
 
 
 class SubstackAuthError(SubstackError):
@@ -91,7 +77,7 @@ class SubstackPublisher:
         self._api_factory = api_factory
         self._api: Any | None = None
         self._lock = threading.Lock()
-        self._publish_lock = threading.Lock()
+        self._draft_lock = threading.Lock()
 
     @property
     def api(self) -> Any:
@@ -183,75 +169,77 @@ class SubstackPublisher:
             return False
         return True
 
-    async def publish(self, title: str, subtitle: str, body_markdown: str) -> str:
-        """Publish to the web only and return the public URL.
+    def editor_url(self, draft_id: str) -> str:
+        """The link that opens the draft in the Substack editor."""
+        base = self._publication_url.rstrip("/")
+        return base + EDITOR_PATH.format(draft_id=draft_id)
 
-        Re-checks the session first. Any failure alerts Stuart, raises
-        ``PublishError`` and is never retried here, to avoid a double post.
+    async def create_draft(self, title: str, subtitle: str, body_markdown: str) -> str:
+        """Create a Substack draft and return its ID. Never publishes.
+
+        Re-checks the session first (which alerts on failure). Raises
+        ``DraftError`` on any other failure; the caller alerts. Never retried.
         """
         await self.ensure_session()
-        try:
-            return await asyncio.to_thread(
-                self._publish_blocking, title, subtitle, body_markdown
-            )
-        except PublishError as error:
-            logger.error("Publishing failed: %s", error)
-            await alert(PUBLISH_ALERT_EVENT, str(error))
-            raise
+        return await asyncio.to_thread(
+            self._create_blocking, title, subtitle, body_markdown
+        )
 
-    def _publish_blocking(self, title: str, subtitle: str, body_markdown: str) -> str:
-        """Markdown -> draft -> prepublish -> publish(send=False). Blocking."""
-        with self._publish_lock:  # two publishes never overlap
-            api = self.api
-            draft_id: str | None = None
-            published_called = False
+    async def update_draft(
+        self, draft_id: str, title: str, subtitle: str, body_markdown: str
+    ) -> None:
+        """Replace the title, subtitle and body of an existing draft.
+
+        Re-checks the session first. Raises ``DraftError`` on failure.
+        """
+        await self.ensure_session()
+        await asyncio.to_thread(
+            self._update_blocking, draft_id, title, subtitle, body_markdown
+        )
+
+    def _create_blocking(self, title: str, subtitle: str, body_markdown: str) -> str:
+        """Markdown -> draft; returns the draft ID. Blocking."""
+        with self._draft_lock:  # two draft calls never overlap
             try:
-                draft = api.create_draft_from_markdown(
+                reply = self.api.create_draft_from_markdown(
                     title, body_markdown, subtitle=subtitle
-                )["draft"]
-                draft_id = str(draft["id"])
-                api.prepublish_draft(draft_id)
-                published_called = True
-                result = api.publish_draft(draft_id, send=SEND_EMAIL)
-                return self._public_url(result)
-            except Exception as error:
-                logger.exception("Substack publish failed")
-                raise self._publish_failure(
-                    draft_id, published_called, type(error).__name__
-                ) from None
+                )
+                return self._draft_id(reply)
+            except Exception as error:  # noqa: BLE001  # ERR-18: any library error
+                raise self._draft_failure("creating", error) from None
 
-    def _public_url(self, result: Any) -> str:
-        """The post's public https URL from the publish reply."""
-        if isinstance(result, dict):
-            url = result.get("canonical_url")
-            if isinstance(url, str) and url.startswith("https://"):
-                return url
-            slug = result.get("slug")
-            if isinstance(slug, str) and slug:
-                return f"{self._publication_url.rstrip('/')}/p/{slug}"
-        raise ValueError("publish reply had no post URL")
+    def _update_blocking(
+        self, draft_id: str, title: str, subtitle: str, body_markdown: str
+    ) -> None:
+        """Rewrite an existing draft's body, subtitle and title. Blocking."""
+        with self._draft_lock:
+            try:
+                # The draft is the agent's own copy of the stored post, so the
+                # library's revision check is skipped on purpose.
+                self.api.update_draft_from_markdown(
+                    draft_id, body_markdown, subtitle=subtitle, allow_conflict=True
+                )
+                self.api.put_draft(draft_id, draft_title=title)
+            except Exception as error:  # noqa: BLE001  # ERR-18: any library error
+                raise self._draft_failure("updating", error) from None
 
     @staticmethod
-    def _publish_failure(
-        draft_id: str | None, published_called: bool, error_name: str
-    ) -> PublishError:
-        """Describe a failure, logging any orphaned draft with its ID."""
-        if published_called:
-            note = (
-                f"Substack publish failed ({error_name}) after the publish call; "
-                f"the post may be live. Check Substack before retrying. "
-                f"Draft ID: {draft_id}"
-            )
-        elif draft_id is not None:
-            logger.error(
-                "Orphaned Substack draft left by a failed publish: %s", draft_id
-            )
-            note = (
-                f"Substack publish failed ({error_name}). Nothing was published; "
-                f"orphaned draft ID: {draft_id}"
-            )
-        else:
-            note = f"Substack publish failed ({error_name}). No draft was created."
-        if published_called:
-            logger.error("Draft %s may be published or orphaned", draft_id)
-        return PublishError(note, draft_id, maybe_published=published_called)
+    def _draft_id(reply: Any) -> str:
+        """The new draft's ID from the create reply."""
+        draft = reply.get("draft") if isinstance(reply, dict) else None
+        draft_id = draft.get("id") if isinstance(draft, dict) else None
+        if draft_id is None or draft_id == "":
+            raise ValueError("create reply had no draft id")
+        return str(draft_id)
+
+    @staticmethod
+    def _draft_failure(action: str, error: Exception) -> DraftError:
+        """A typed, secret-free error; the original is logged then cut off so
+        no traceback can carry request headers."""
+        logger.error(
+            "Substack draft %s failed: %s: %s", action, type(error).__name__, error
+        )
+        return DraftError(
+            f"Substack draft {action} failed ({type(error).__name__}). "
+            "Nothing was published."
+        )
