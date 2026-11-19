@@ -103,3 +103,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [ERR-23] In a multi-step operation every statement, reads included, runs through the step runner so a failure names the real step (from PR #31, 2026-11-19)
 - [SEC-16] SQL values are bound as parameters, never interpolated into the statement text (from PR #31, 2026-11-19)
 - [IDEM-02] When an external create call may have succeeded but its reply cannot be read, the error says the resource may exist, and the raw reply is logged (truncated), so a retry is not blind (from PR #32, 2026-11-19)
+- [SEC-17] URL validators reject embedded credentials by checking for any userinfo (`@` in the netloc), not just a username, because a password can exist without one (from PR #33, 2026-11-19)

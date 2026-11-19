@@ -87,7 +87,7 @@ def _parse_publication_url(text: str) -> str:
         raise ConfigError(problem) from None
     if parts.scheme != "https" or not host or host in SUBSTACK_PROFILE_HOSTS:
         raise ConfigError(problem)
-    if parts.path.strip("/") or parts.query or parts.fragment or parts.username:
+    if parts.path.strip("/") or parts.query or parts.fragment or "@" in parts.netloc:
         raise ConfigError(problem)
     return text
 

@@ -174,6 +174,10 @@ def test_invalid_post_word_range_is_a_config_error(overrides: dict[str, str]) ->
         "https://",
         "https://[bad",
         "@name",
+        "https://user@example.com",
+        "https://:secret@example.com",
+        "https://user:secret@example.com",
+        "https://@example.com",
     ],
 )
 def test_a_wrong_shaped_publication_url_is_rejected_naming_the_setting(
