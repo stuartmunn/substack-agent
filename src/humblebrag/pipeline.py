@@ -169,13 +169,15 @@ class RunPipeline:
         failure is alerted too, because a stuck reservation or a pending draft
         nobody has seen needs a human.
         """
-        try:
-            await asyncio.to_thread(self._queue.bin_draft, state.key)
-            if state.draft is not None:
-                await asyncio.to_thread(self._queue.bin_draft, str(state.draft.id))
-        except Exception as error:  # cleanup must not hide the original failure
-            logger.exception("Releasing the seed after a failed run failed")
-            await self._alert("release seed", error)
+        keys = [state.key]
+        if state.draft is not None:
+            keys.append(str(state.draft.id))
+        for key in keys:  # each release is guarded alone: one failure skips none
+            try:
+                await asyncio.to_thread(self._queue.bin_draft, key)
+            except Exception as error:  # cleanup must not hide the original failure
+                logger.exception("Releasing the seed after a failed run failed")
+                await self._alert("release seed", error)
         if state.draft is not None:
             try:
                 await asyncio.to_thread(self._store.mark_binned, state.draft.id)

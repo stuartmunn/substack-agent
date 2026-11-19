@@ -93,3 +93,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [IDEM-01] After an irreversible external action, remember in memory that it happened, so a failed bookkeeping write cannot let a retry repeat it (from PR #25, 2026-11-18)
 - [ERR-21] Cleanup run inside an except block is guarded on its own (logged and alerted), so a cleanup failure never replaces the original error that is being reported (from PR #26, 2026-11-18)
 - [CON-03] A cancelled await on asyncio.to_thread does not stop the thread: code that creates something in a thread records the result even on cancellation, so cleanup can undo it (from PR #26, 2026-11-18)
+- [ERR-22] Cleanup that must release several resources guards each release on its own, so one failure never skips the others (from PR #26, 2026-11-19)

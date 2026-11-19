@@ -447,6 +447,27 @@ async def test_a_failed_release_is_alerted_too(
     assert any(STEP_GENERATE in text for text in alerts)
 
 
+async def test_a_failed_provisional_release_does_not_skip_the_draft_id_release(
+    rig: Rig, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The release under the draft id still runs when the provisional one fails."""
+    rig.bot.fail_send = True
+    released: list[str] = []
+    real = rig.queue.bin_draft
+
+    def flaky(key: str) -> bool:
+        released.append(key)
+        if len(released) == 1:
+            raise RuntimeError("lock stuck")
+        return real(key)
+
+    monkeypatch.setattr(rig.queue, "bin_draft", flaky)
+    assert await rig.pipeline.run() is None
+    assert len(released) == 2
+    assert rig.reservations() == {}
+    assert any("release seed" in text and "lock stuck" in text for text in alerts)
+
+
 async def test_a_gate_failure_is_alerted_not_skipped_silently(
     rig: Rig, alerts: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
