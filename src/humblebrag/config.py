@@ -82,7 +82,8 @@ def _parse_publication_url(text: str) -> str:
     problem = f"{PUBLICATION_URL_SETTING} must be {PUBLICATION_URL_FORMAT}"
     try:
         parts = urlsplit(text)
-        host = parts.hostname
+        host = (parts.hostname or "").rstrip(".")
+        _ = parts.port  # raises ValueError for a non-numeric or out-of-range port
     except ValueError:
         raise ConfigError(problem) from None
     if parts.scheme != "https" or not host or host in SUBSTACK_PROFILE_HOSTS:
