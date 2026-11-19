@@ -77,6 +77,7 @@ def test_setup_installs_every_handler_and_builds_the_pipeline(tmp_path: Path) ->
     assert application.bot_data[ALLOWED_CHAT_KEY] == 12345
     assert runtime.pipeline is not None
     assert runtime.scheduler is not None
+    assert runtime.backup is not None
     assert (tmp_path / "humblebrag.db").exists()
 
 
@@ -116,14 +117,18 @@ async def test_start_runs_the_session_checks_and_the_scheduler(
     async def scheduler_loop() -> None:
         seen.append("scheduler")
 
+    async def backup_loop() -> None:
+        seen.append("backup")
+
     monkeypatch.setattr(runtime.publisher, "check_session_or_alert", check)
     monkeypatch.setattr(runtime.monitor, "mark_checked_if_due", mark)
     monkeypatch.setattr(runtime.monitor, "run_forever", monitor_loop)
     monkeypatch.setattr(runtime.scheduler, "run_forever", scheduler_loop)
+    monkeypatch.setattr(runtime.backup, "run_forever", backup_loop)
     await asyncio.wait_for(runtime.start(), timeout=5)
     # the monitor only starts after the startup check has been made and recorded
     assert seen.index("startup check") < seen.index("mark") < seen.index("monitor")
-    assert {"startup check", "mark", "monitor", "scheduler"} <= set(seen)
+    assert {"startup check", "mark", "monitor", "scheduler", "backup"} <= set(seen)
 
 
 async def test_start_before_setup_is_an_error(tmp_path: Path) -> None:
