@@ -21,10 +21,14 @@ Quick health check: `docker compose ps` should show `humblebrag` as `healthy`
    `SUBSTACK_PUBLICATION_URL`. `RUN_TIME` (default `08:30`) and `TZ` (default
    `Europe/London`) are optional. Compose refuses to start if a required value
    is unset and names the missing one.
-4. Build and start: `docker compose up -d --build`
-5. Check it came up: `docker compose ps` (wait for `healthy`) and
-   `docker compose logs --tail 50 humblebrag`. You should see
-   `Configuration loaded` and `Telegram bot polling`.
+4. Deploy: `./scripts/deploy.sh`. It builds and starts the container, waits
+   for it to be `healthy`, then runs the [smoke test](#smoke-test). (The
+   script starts with `git pull --ff-only`, which does nothing on a fresh clone.)
+5. Check Telegram for the message `Sir Humblebrag reporting for duty`. That
+   message means the bot token, chat id and network all work. You can also
+   look at `docker compose ps` (`healthy`) and
+   `docker compose logs --tail 50 humblebrag` (`Configuration loaded`,
+   `Telegram bot polling`).
 6. In Telegram, send `/help` to the bot. Only the chat in `TELEGRAM_CHAT_ID`
    gets an answer; any other chat is ignored and logged.
 7. Add a first seed with `/seed <text>` (or see
@@ -35,21 +39,47 @@ Never commit `.env` or `secrets/`.
 
 ## Update the image
 
-The image is built on `andor` from the repo (there is no registry).
+The image is built on `andor` from the repo (there is no registry), so an
+update is one command, run in the repo checkout:
 
-1. `git checkout main && git pull`
+    ./scripts/deploy.sh
+
+It does, in order, and stops at the first failure with `DEPLOY FAILED: ...`:
+
+1. `git pull --ff-only` (a pull that cannot fast-forward stops the deploy
+   before anything is rebuilt).
 2. `docker compose up -d --build`. Compose rebuilds the image and recreates the
    container. It waits up to 45 seconds for a Substack check in flight, then
    stops it.
-3. `docker compose ps` shows `healthy` again, and
-   `docker compose logs --tail 50 humblebrag` shows `Telegram bot polling`.
+3. Waits up to 2 minutes (`DEPLOY_HEALTH_TIMEOUT`, in seconds) for the
+   container to report `healthy`.
+4. Runs the [smoke test](#smoke-test).
+
+The manual equivalent is `git pull --ff-only && docker compose up -d --build`.
 
 The `/data` volume survives updates: seeds, drafts and the schedule are kept.
 A restart never publishes anything (publishing needs Approve), and the daily
 run is claimed once per day, so restarting around 08:30 cannot double-run it.
 
-If the new version misbehaves, `git checkout <previous commit>` and run
-`docker compose up -d --build` again.
+To roll back a bad version, check out the previous commit and rebuild directly
+(not with the script, whose `git pull` fails on a detached HEAD):
+`git checkout <previous commit> && docker compose up -d --build`, then run the
+[smoke test](#smoke-test). Return to `main` with `git checkout main` before the
+next deploy.
+
+## Smoke test
+
+`docker compose exec -T humblebrag python -m humblebrag.smoke` sends one
+Telegram message, `Sir Humblebrag reporting for duty`, to the configured chat,
+using the same token and chat id as the running agent. Exit code 0 means it was
+sent. It does nothing else: no run, no draft, nothing is published.
+`./scripts/deploy.sh` runs it after every deploy; you can also run it by hand at
+any time to check the bot is reachable.
+
+If it fails, the cause is in `docker compose logs humblebrag` (the log line
+`Smoke test failed`). Common causes: a wrong `TELEGRAM_CHAT_ID`, a revoked
+bot token in `secrets/telegram_bot_token`, or no outbound network from `andor`.
+It cannot alert you on Telegram, because Telegram is what failed.
 
 ## Refresh the Substack cookie
 
@@ -65,6 +95,8 @@ publish (the draft stays pending, nothing is lost).
 4. Write it to the secret file with no extra text, and keep it private:
    `printf '%s' '<the value>' > secrets/substack_cookie && chmod 600 secrets/substack_cookie`
 5. Restart so the new value is read: `docker compose up -d --force-recreate`
+   (then `docker compose exec -T humblebrag python -m humblebrag.smoke` if you
+   want proof the bot is back)
 6. Check the logs for a clean startup (no `Substack session check failed`).
    The agent checks the session at startup and then once a day.
 
