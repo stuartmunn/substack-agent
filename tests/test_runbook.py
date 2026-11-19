@@ -50,3 +50,19 @@ def test_the_runbook_names_no_secret_values() -> None:
     """SEC-01: only placeholders, never a realistic token or key."""
     text = RUNBOOK.read_text()
     assert not re.search(r"sk-ant-\w{10,}|\d{6,}:[\w-]{20,}", text)
+
+
+def test_the_runbook_documents_the_deploy_script_and_smoke_test() -> None:
+    """SA-39: the one-command deploy and the smoke test are both documented."""
+    text = RUNBOOK.read_text()
+    assert "./scripts/deploy.sh" in text
+    assert "docker compose up -d --build" in text
+    assert "python -m humblebrag.smoke" in text
+    assert "Sir Humblebrag reporting for duty" in text
+    assert "Smoke test" in _sections()
+
+
+def test_the_runbook_and_the_script_agree_on_the_smoke_command() -> None:
+    """The command in the runbook is the one deploy.sh runs."""
+    script = (RUNBOOK.parent.parent / "scripts" / "deploy.sh").read_text()
+    assert "python -m humblebrag.smoke" in script

@@ -96,3 +96,5 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [ERR-22] Cleanup that must release several resources guards each release on its own, so one failure never skips the others (from PR #26, 2026-11-19)
 - [CON-04] A value reported after a write to shared state (such as a count) is computed inside the same lock acquisition as the write, not read back afterwards (from PR #27, 2026-11-19)
 - [CON-05] A decision based on shared state and the write that depends on it (e.g. read the claimed day, then set a flag) happen under one lock acquisition (from PR #27, 2026-11-19)
+- [OPS-02] Shell scripts run under `set -e` guard every command whose failure the script should report itself (`cmd || fallback`), so a tool error reaches the script's own failure message instead of a raw abort (from PR #30, 2026-11-19)
+- [OPS-03] A bounded wait loop checks its condition one last time at the deadline, so the final interval's result is never discarded (from PR #30, 2026-11-19)

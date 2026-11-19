@@ -17,7 +17,9 @@ always uses `send=False`, so no email is ever sent to subscribers.
    `telegram_bot_token`, `anthropic_api_key`, `substack_cookie`.
 2. Put the non-secret values (`TELEGRAM_CHAT_ID`, `CLAUDE_MODEL`,
    `SUBSTACK_PUBLICATION_URL`, optionally `RUN_TIME`, `TZ`) in `.env`.
-3. `docker compose up -d --build`. The container runs as a non-root user,
+3. `./scripts/deploy.sh` (pulls, runs `docker compose up -d --build`, waits for
+   healthy, then sends the "Sir Humblebrag reporting for duty" smoke-test
+   message to Telegram; see `docs/runbook.md`). The container runs as a non-root user,
    exposes no ports, restarts unless stopped, and keeps state in the
    `humblebrag-data` volume mounted at `/data`.
 
