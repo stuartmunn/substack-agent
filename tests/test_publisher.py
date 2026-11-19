@@ -23,9 +23,11 @@ from humblebrag.alerts import configure_alerts
 from humblebrag.config import Config, load_config
 from humblebrag.logging_setup import redactor
 from humblebrag.publisher import (
+    PUBLICATION_UNAVAILABLE_MESSAGE,
     REQUEST_TIMEOUT_SECONDS,
     RUNBOOK_URL,
     SESSION_EXPIRED_MESSAGE,
+    PublicationUnavailableError,
     SubstackAuthError,
     SubstackError,
     SubstackPublisher,
@@ -264,23 +266,65 @@ async def test_expired_session_alerts_with_message_and_runbook(
     assert RUNBOOK_URL.endswith("docs/runbook.md#refresh-the-substack-cookie")
 
 
-@pytest.mark.parametrize(
-    "message",
-    [
-        "Requested publication is unavailable: https://humblebrag.substack.com",
-        "Could not find primary publication in profile",
-    ],
-)
-async def test_a_session_with_no_access_to_the_publication_counts_as_expired(
-    alerts: list[str], message: str
+async def test_a_logged_out_cookie_with_no_primary_publication_counts_as_expired(
+    alerts: list[str],
 ) -> None:
-    """AC3: a logged-out cookie sees no publications, which is the same alert."""
+    """A cookie that logs in as nobody still gets the session-expired alert."""
     publisher = SubstackPublisher(
-        _config(), _failing(SubstackRequestException(message))
+        _config(),
+        _failing(
+            SubstackRequestException("Could not find primary publication in profile")
+        ),
     )
     with pytest.raises(SubstackAuthError):
         await publisher.ensure_session()
     assert SESSION_EXPIRED_MESSAGE in alerts[0]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Requested publication is unavailable: https://humblebrag.substack.com",
+        "requested publication is UNAVAILABLE",
+        "Error: the publication is unavailable right now",
+        "Publication unavailable",
+    ],
+)
+async def test_an_unavailable_publication_blames_the_url_not_the_session(
+    alerts: list[str], message: str
+) -> None:
+    """SA-43 AC2: the alert names the URL first; it does not claim the session
+    expired. (Substack uses the same text for a logged-out cookie, so the alert
+    also mentions that, agreed with Stuart.)"""
+    publisher = SubstackPublisher(
+        _config(), _failing(SubstackRequestException(message))
+    )
+    with pytest.raises(PublicationUnavailableError) as raised:
+        await publisher.ensure_session()
+    assert not isinstance(raised.value, SubstackAuthError)
+    [text] = alerts
+    assert PUBLICATION_UNAVAILABLE_MESSAGE in text
+    assert "SUBSTACK_PUBLICATION_URL" in text
+    assert text.index("wrong or unreachable") < text.index("logged out")
+    assert "expired" not in text
+    assert RUNBOOK_URL in text
+
+
+async def test_a_reworded_unavailable_message_falls_back_to_a_generic_alert(
+    alerts: list[str],
+) -> None:
+    """SA-43 risk: if Substack changes its text we still alert, just generically."""
+    publisher = SubstackPublisher(
+        _config(), _failing(SubstackRequestException("Something else entirely"))
+    )
+    with pytest.raises(SubstackError) as raised:
+        await publisher.ensure_session()
+    assert not isinstance(
+        raised.value, (SubstackAuthError, PublicationUnavailableError)
+    )
+    [text] = alerts
+    assert "Session check failed" in text
+    assert "expired" not in text
 
 
 @pytest.mark.parametrize(
@@ -398,11 +442,12 @@ def test_real_api_matches_the_configured_publication(wire: Wire) -> None:
 
 
 def test_real_api_rejects_a_publication_the_account_does_not_own(wire: Wire) -> None:
-    """AC3: a cookie for another account reads as an expired session."""
+    """SA-43 AC2: a publication the account cannot see is an unavailable
+    publication (check the URL), not an expired session."""
     publisher = SubstackPublisher(
         _config(SUBSTACK_PUBLICATION_URL="https://someoneelse.substack.com")
     )
-    with pytest.raises(SubstackAuthError):
+    with pytest.raises(PublicationUnavailableError):
         publisher.check_session()
 
 
@@ -413,10 +458,13 @@ def test_real_api_401_is_an_expired_session(wire: Wire) -> None:
         SubstackPublisher(_config()).check_session()
 
 
-def test_real_api_logged_out_cookie_with_no_publications_is_expired(wire: Wire) -> None:
-    """AC3: a 200 with no publications (logged out) is also an expired session."""
+def test_real_api_logged_out_cookie_with_no_publications_is_not_hidden(
+    wire: Wire,
+) -> None:
+    """A 200 with no publications (logged out) gets the unavailable-publication
+    alert, which also names the logged-out cookie as a cause."""
     wire.publications = []
-    with pytest.raises(SubstackAuthError):
+    with pytest.raises(PublicationUnavailableError, match="logged out"):
         SubstackPublisher(_config()).check_session()
 
 

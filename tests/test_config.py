@@ -156,3 +156,60 @@ def test_invalid_post_word_range_is_a_config_error(overrides: dict[str, str]) ->
     """SA-23 AC4: non-numeric, non-positive or inverted limits are rejected."""
     with pytest.raises(ConfigError):
         load_config({**BASE_ENV, **overrides})
+
+
+# SA-43: the publication URL is validated when the config loads
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://substack.com/@name",
+        "https://substack.com/@name/",
+        "https://www.substack.com/@name",
+        "https://substack.com",
+        "https://humblebrag.substack.com/p/some-post",
+        "http://humblebrag.substack.com",
+        "humblebrag.substack.com",
+        "https://",
+        "https://[bad",
+        "@name",
+    ],
+)
+def test_a_wrong_shaped_publication_url_is_rejected_naming_the_setting(
+    url: str,
+) -> None:
+    """SA-43 AC1: profile-style and other wrong URLs fail with the format."""
+    with pytest.raises(ConfigError) as raised:
+        load_config({**BASE_ENV, "SUBSTACK_PUBLICATION_URL": url})
+    message = str(raised.value)
+    assert "SUBSTACK_PUBLICATION_URL" in message
+    assert "https://<subdomain>.substack.com" in message
+    assert "custom domain" in message
+
+
+def test_a_rejected_publication_url_exits_with_a_clear_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SA-43 AC1: the process exits non-zero and logs the reason."""
+    env = {**BASE_ENV, "SUBSTACK_PUBLICATION_URL": "https://substack.com/@name"}
+    with pytest.raises(SystemExit) as raised, caplog.at_level(logging.ERROR):
+        load_config_or_exit(env)
+    assert raised.value.code != 0
+    assert "SUBSTACK_PUBLICATION_URL" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://humblebrag.substack.com",
+        "https://humblebrag.substack.com/",
+        "https://example.com",
+        "https://blog.example.co.uk/",
+        "https://example.com:8443",
+    ],
+)
+def test_subdomain_and_custom_domain_publication_urls_are_accepted(url: str) -> None:
+    """SA-43 AC3: real publication addresses still load, unchanged."""
+    config = load_config({**BASE_ENV, "SUBSTACK_PUBLICATION_URL": url})
+    assert config.substack_publication_url == url
