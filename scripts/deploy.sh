@@ -29,9 +29,10 @@ step "Waiting up to ${HEALTH_TIMEOUT}s for ${SERVICE} to be healthy"
 waited=0
 status=unknown
 while [ "$waited" -lt "$HEALTH_TIMEOUT" ]; do
-    container="$(docker compose ps -q "$SERVICE")"
+    status=unknown
+    container="$(docker compose ps -q "$SERVICE" 2>/dev/null || true)"
     if [ -n "$container" ]; then
-        status="$(docker inspect --format '{{.State.Health.Status}}' "$container")"
+        status="$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo unknown)"
     fi
     [ "$status" = healthy ] && break
     sleep "$POLL_SECONDS"

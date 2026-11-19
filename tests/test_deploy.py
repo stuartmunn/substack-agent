@@ -21,10 +21,11 @@ DOCKER_STUB = """#!/bin/bash
 echo "docker $*" >> "$STUB_LOG"
 case "$1 $2" in
   "compose up") [ "${STUB_UP_FAIL:-0}" = 1 ] && exit 1; exit 0 ;;
-  "compose ps") echo "container-1"; exit 0 ;;
+  "compose ps") [ "${STUB_PS_FAIL:-0}" = 1 ] && exit 1; echo "container-1"; exit 0 ;;
   "compose exec") exit "${STUB_SMOKE_EXIT:-0}" ;;
 esac
 if [ "$1" = inspect ]; then
+  [ "${STUB_INSPECT_FAIL:-0}" = 1 ] && { echo "Template parsing error" >&2; exit 1; }
   count_file="$STUB_DIR/inspect_count"
   count=$(cat "$count_file" 2>/dev/null || echo 0)
   echo $((count + 1)) > "$count_file"
@@ -112,6 +113,18 @@ def test_an_unhealthy_container_fails_the_deploy_and_skips_the_smoke_test(
     assert result.returncode != 0
     assert "DEPLOY FAILED" in result.stderr
     assert "unhealthy" in result.stderr
+    assert not any("humblebrag.smoke" in call for call in calls)
+
+
+@pytest.mark.parametrize("broken", ["STUB_INSPECT_FAIL", "STUB_PS_FAIL"])
+def test_a_failing_docker_query_gets_the_friendly_failure_not_a_raw_abort(
+    stubs: Path, broken: str
+) -> None:
+    """ERR-01: `docker inspect` or `ps` erroring is reported as DEPLOY FAILED."""
+    result, calls = _deploy(stubs, **{broken: "1"})
+    assert result.returncode != 0
+    assert "DEPLOY FAILED" in result.stderr
+    assert "'unknown'" in result.stderr
     assert not any("humblebrag.smoke" in call for call in calls)
 
 
