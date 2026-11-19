@@ -24,7 +24,7 @@ from humblebrag.commands import (
 )
 from humblebrag.config import load_config
 from humblebrag.scheduler import Claim, SchedulerState
-from humblebrag.seed_queue import MAX_SEED_LENGTH, SeedQueue
+from humblebrag.seed_queue import MAX_SEED_LENGTH, AddedSeed, SeedQueue
 
 ENV = {
     "TELEGRAM_BOT_TOKEN": "123456:TESTTOKEN",
@@ -167,7 +167,7 @@ async def test_seed_failure_alerts_and_tells_the_chat(
 ) -> None:
     """ERR-01: a broken queue is an alert and a reply, not a crash."""
 
-    def broken(_text: str) -> str:
+    def broken(_text: str) -> AddedSeed:
         raise RuntimeError("disk full")
 
     monkeypatch.setattr(rig.queue, "add_seed", broken)
@@ -382,3 +382,9 @@ def test_install_registers_the_four_commands() -> None:
     service = SimpleNamespace(on_seed=1, on_seeds=2, on_skip=3, on_now=4)
     install_commands(application, service)  # type: ignore[arg-type]
     assert [min(h.commands) for h in handlers] == ["seed", "seeds", "skip", "now"]
+
+
+def test_the_count_is_taken_under_the_same_lock_as_the_append(rig: Rig) -> None:
+    """The count in the confirmation is the queue size at the moment of the append."""
+    assert rig.queue.add_seed("Third") == AddedSeed("Third", 3)
+    assert rig.queue.add_seed("Fourth") == AddedSeed("Fourth", 4)

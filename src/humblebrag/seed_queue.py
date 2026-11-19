@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
+from typing import NamedTuple
 
 from humblebrag.seed import Seed, SeedFile, seed_key, write_atomically
 
@@ -26,6 +27,13 @@ LOCK_SUFFIX = ".lock"
 LOCK_TIMEOUT_SECONDS = 5.0
 LOCK_POLL_SECONDS = 0.05
 MAX_SEED_LENGTH = 300
+
+
+class AddedSeed(NamedTuple):
+    """A seed that was just added: its stored text and the unused count after it."""
+
+    text: str
+    unused_count: int
 
 
 class InvalidSeedError(ValueError):
@@ -120,8 +128,10 @@ class SeedQueue:
         """The text of every unused seed (reserved ones included), in file order."""
         return [seed.text for seed in SeedFile.load(self._seed_path).unused]
 
-    def add_seed(self, text: str) -> str:
-        """Append ``text`` as an unused seed and return the text as stored.
+    def add_seed(self, text: str) -> AddedSeed:
+        """Append ``text`` as an unused seed; return it and the new unused count.
+
+        The count is taken under the same lock as the append, so it is exact.
 
         Raises InvalidSeedError if it is empty, too long, has control
         characters, or is already an unused seed (compared case-insensitively).
@@ -139,7 +149,7 @@ class SeedQueue:
                 raise InvalidSeedError("That seed is already in the queue.")
             seed_file.append_seed(cleaned)
             seed_file.save()
-        return cleaned
+            return AddedSeed(cleaned, len(seed_file.unused))
 
     def add_generated(self, text: str, draft_id: str) -> Seed | None:
         """Append ``text`` as a ``(generated)`` seed and reserve one for the draft.

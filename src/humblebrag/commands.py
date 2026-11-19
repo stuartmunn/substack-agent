@@ -103,8 +103,7 @@ class CommandService:
             await self._reply(update, SEED_USAGE)
             return
         try:
-            stored = await asyncio.to_thread(self._queue.add_seed, text)
-            count = len(await asyncio.to_thread(self._queue.unused_texts))
+            added = await asyncio.to_thread(self._queue.add_seed, text)
         except InvalidSeedError as error:
             await self._reply(update, SEED_REJECTED.format(reason=error))
             return
@@ -112,7 +111,9 @@ class CommandService:
             logger.exception("Command /seed failed")
             await self._fail(update, "/seed", error)
             return
-        await self._reply(update, SEED_ADDED.format(count=count, text=stored))
+        await self._reply(
+            update, SEED_ADDED.format(count=added.unused_count, text=added.text)
+        )
 
     async def on_seeds(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
