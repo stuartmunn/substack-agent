@@ -89,6 +89,24 @@ class SeedQueue:
             self._save_reservations(reservations)
             return True
 
+    def rekey(self, old_id: str, new_id: str) -> None:
+        """Move a reservation from ``old_id`` to ``new_id`` atomically.
+
+        A run reserves its seed before the draft exists, under a provisional
+        key; once the draft has its real id the reservation is re-keyed to
+        ``str(draft.id)`` so Approve and Bin can find it. Raises
+        UnknownDraftError if ``old_id`` holds nothing, and
+        ReservationStateError if ``new_id`` is already reserved.
+        """
+        with self._locked():
+            reservations = self._load_reservations()
+            text = self._reserved_text(reservations, old_id)
+            if new_id in reservations:
+                raise ReservationStateError(f"Draft {new_id} already has a reservation")
+            del reservations[old_id]
+            reservations[new_id] = text
+            self._save_reservations(reservations)
+
     def seed_texts(self) -> list[str]:
         """Every seed's text (used or not), in file order."""
         return [seed.text for seed in SeedFile.load(self._seed_path).seeds]

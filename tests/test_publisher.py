@@ -217,8 +217,11 @@ def test_entrypoint_passes_the_session_check_to_the_bot() -> None:
     source = (
         Path(__file__).resolve().parent.parent / "src/humblebrag/__main__.py"
     ).read_text()
-    assert "publisher.check_session_or_alert()" in source
-    assert "on_started=lambda: run_session_checks(publisher, monitor)" in source
+    assert "on_started=runtime.start" in source
+    wiring = (
+        Path(__file__).resolve().parent.parent / "src/humblebrag/wiring.py"
+    ).read_text()
+    assert "publisher.check_session_or_alert()" in wiring
 
 
 async def test_startup_check_reports_health_without_raising(alerts: list[str]) -> None:

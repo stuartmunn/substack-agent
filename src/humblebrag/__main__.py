@@ -10,8 +10,7 @@ from humblebrag.bot import run_bot
 from humblebrag.config import Config, load_config_or_exit
 from humblebrag.heartbeat import heartbeat_loop
 from humblebrag.logging_setup import configure_logging, register_secrets
-from humblebrag.publisher import SubstackPublisher
-from humblebrag.session_monitor import MonitorState, SessionMonitor
+from humblebrag.wiring import Runtime
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +33,6 @@ def _request_stop(tasks: list[asyncio.Task[None]]) -> None:
         task.cancel()
 
 
-async def run_session_checks(
-    publisher: SubstackPublisher, monitor: SessionMonitor
-) -> None:
-    """Check the session at startup, then daily (counting the startup check)."""
-    await publisher.check_session_or_alert()
-    await monitor.mark_checked_if_due()
-    await monitor.run_forever()
-
-
 async def run_until_signalled(config: Config) -> None:
     """Run the heartbeat and bot until SIGTERM or SIGINT, then stop cleanly.
 
@@ -50,15 +40,15 @@ async def run_until_signalled(config: Config) -> None:
     If either task fails, the other is cancelled and the error propagates.
     """
     loop = asyncio.get_running_loop()
-    publisher = SubstackPublisher(config)
-    monitor = SessionMonitor(config, MonitorState(), publisher.ensure_session)
+    runtime = Runtime(config)
     async with asyncio.TaskGroup() as group:
         tasks = [
             group.create_task(heartbeat_loop()),
             group.create_task(
                 run_bot(
                     config,
-                    on_started=lambda: run_session_checks(publisher, monitor),
+                    on_started=runtime.start,
+                    setup=runtime.setup,
                 )
             ),
         ]
