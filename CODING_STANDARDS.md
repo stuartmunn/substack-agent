@@ -95,3 +95,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [CON-03] A cancelled await on asyncio.to_thread does not stop the thread: code that creates something in a thread records the result even on cancellation, so cleanup can undo it (from PR #26, 2026-11-18)
 - [ERR-22] Cleanup that must release several resources guards each release on its own, so one failure never skips the others (from PR #26, 2026-11-19)
 - [CON-04] A value reported after a write to shared state (such as a count) is computed inside the same lock acquisition as the write, not read back afterwards (from PR #27, 2026-11-19)
+- [CON-05] A decision based on shared state and the write that depends on it (e.g. read the claimed day, then set a flag) happen under one lock acquisition (from PR #27, 2026-11-19)

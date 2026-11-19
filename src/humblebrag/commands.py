@@ -9,7 +9,7 @@ schedule's state; ``/skip`` only sets the scheduler's skip flag.
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -61,14 +61,6 @@ class RunCoordinator:
             return False, None
         async with self._lock:
             return True, await self._run()
-
-
-def next_run_date(state: SchedulerState, now: datetime, config: Config) -> date:
-    """The local date of the next scheduled run: today until today is claimed."""
-    today = now.astimezone(config.tz).date()
-    if state.read().last_run_date == today:
-        return today + timedelta(days=1)
-    return today
 
 
 def _shorten(text: str) -> str:
@@ -154,9 +146,8 @@ class CommandService:
 
     def _skip_next(self) -> date:
         """Set the skip flag and return the date it applies to."""
-        day = next_run_date(self._state, self._clock(), self._config)
-        self._state.set_skip_next(True)
-        return day
+        today = self._clock().astimezone(self._config.tz).date()
+        return self._state.skip_next_run(today)
 
     async def _run_now(self, update: Update) -> None:
         """Run in the background; every outcome reaches the chat or an alert."""

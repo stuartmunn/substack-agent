@@ -1,6 +1,7 @@
 """Tests for /seed, /seeds, /skip and /now (SA-36 acceptance criteria)."""
 
 import asyncio
+import fcntl
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from humblebrag import scheduler as scheduler_module
 from humblebrag.alerts import configure_alerts
 from humblebrag.commands import (
     FAILED,
@@ -23,6 +25,7 @@ from humblebrag.commands import (
     install_commands,
 )
 from humblebrag.config import load_config
+from humblebrag.file_lock import LockTimeoutError, file_lock
 from humblebrag.scheduler import Claim, SchedulerState
 from humblebrag.seed_queue import MAX_SEED_LENGTH, AddedSeed, SeedQueue
 
@@ -267,10 +270,10 @@ async def test_skip_failure_alerts(
 ) -> None:
     """ERR-01: an unwritable state file is alerted and reported."""
 
-    def broken(_skip: bool) -> None:
+    def broken(_today: date) -> date:
         raise RuntimeError("read-only")
 
-    monkeypatch.setattr(rig.state, "set_skip_next", broken)
+    monkeypatch.setattr(rig.state, "skip_next_run", broken)
     await rig.say("on_skip")
     assert rig.replies == [FAILED]
     assert len(alerts) == 1 and "/skip" in alerts[0]
@@ -388,3 +391,24 @@ def test_the_count_is_taken_under_the_same_lock_as_the_append(rig: Rig) -> None:
     """The count in the confirmation is the queue size at the moment of the append."""
     assert rig.queue.add_seed("Third") == AddedSeed("Third", 3)
     assert rig.queue.add_seed("Fourth") == AddedSeed("Fourth", 4)
+
+
+def test_reading_the_claim_and_setting_the_skip_share_one_lock(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CON-05: a held state lock blocks /skip, so it cannot race a claim."""
+    monkeypatch.setattr(
+        scheduler_module, "file_lock", lambda path: file_lock(path, timeout=0.05)
+    )
+    with rig.state._lock_path.open("a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        with pytest.raises(LockTimeoutError):
+            rig.state.skip_next_run(TODAY)
+    assert rig.state.read().skip_next is False
+
+
+def test_skip_next_run_names_today_until_it_is_claimed(rig: Rig) -> None:
+    """The returned day is today before the claim and tomorrow after it."""
+    assert rig.state.skip_next_run(TODAY) == TODAY
+    rig.state.claim(TODAY)
+    assert rig.state.skip_next_run(TODAY) == date(2026, 11, 19)
