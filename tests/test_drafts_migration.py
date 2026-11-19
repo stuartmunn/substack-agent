@@ -160,6 +160,17 @@ def test_ids_are_never_reused_after_the_rebuild(old_db: Path) -> None:
     assert _make(store) == 6
 
 
+def test_the_id_counter_survives_when_every_row_was_deleted(tmp_path: Path) -> None:
+    """AC3: an old table emptied before migrating still never reuses an id."""
+    path = tmp_path / "humblebrag.db"
+    _old_database(path)
+    connection = sqlite3.connect(path)
+    connection.execute("DELETE FROM drafts")
+    connection.commit()
+    connection.close()
+    assert _make(DraftStore(path)) == 6
+
+
 # AC4: automatic, once, idempotent
 
 
@@ -185,6 +196,29 @@ def test_rerunning_keeps_data_written_after_the_first_migration(old_db: Path) ->
     again = DraftStore(old_db)
     assert again.get(1).substack_draft_id == "sub-1"
     assert again.get(1).status == STATUS_HANDED_OVER
+
+
+def test_a_current_database_starts_without_taking_a_write_lock(old_db: Path) -> None:
+    """AC4: with the migration done, a second store opens while another
+    connection holds the write lock."""
+    DraftStore(old_db)
+    holder = sqlite3.connect(old_db)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        DraftStore(old_db)
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+
+
+def test_a_failure_while_inspecting_names_that_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC5: a failing table inspection is reported as such, not as 'open'."""
+    monkeypatch.setattr(drafts_module, "_TABLE_INFO_SQL", "PRAGMA nonsense(")
+    with pytest.raises(DraftMigrationError) as caught:
+        DraftStore(tmp_path / "humblebrag.db")
+    assert caught.value.step == "inspect the drafts table"
 
 
 def test_a_missing_database_is_created_with_the_new_schema(tmp_path: Path) -> None:

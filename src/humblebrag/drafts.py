@@ -53,6 +53,7 @@ _OLD_COLUMN_LIST = (
     "created_at, resolved_at, substack_url"
 )
 STEP_COPY = "copy the existing rows"
+_TABLE_INFO_SQL = f"PRAGMA table_info({DRAFTS_TABLE})"
 # SQLite cannot change a CHECK constraint in place, so the table is rebuilt.
 # Each step is (name, SQL); all of them run in one transaction.
 _REBUILD_STEPS = (
@@ -316,8 +317,9 @@ class DraftStore:
     def _migrate(self) -> None:
         """Create the table, or rebuild an old one, in a single transaction.
 
-        Safe to rerun: a table that already has the new column is left alone.
-        On any failure the transaction rolls back, so the original table and
+        Safe to rerun: a table that already has the new column is left alone,
+        and that check is a plain read, so a normal start-up takes no write
+        lock. On any failure the transaction rolls back, so the original table and
         its rows are untouched, and DraftMigrationError names the step.
         """
         try:
@@ -325,6 +327,8 @@ class DraftStore:
                 sqlite3.connect(self._path, timeout=BUSY_TIMEOUT_SECONDS)
             ) as connection:
                 connection.isolation_level = None  # explicit BEGIN/COMMIT
+                if _is_current(connection):
+                    return
                 self._migrate_in_transaction(connection)
         except sqlite3.Error as error:
             raise DraftMigrationError(
@@ -346,10 +350,12 @@ class DraftStore:
 
     @staticmethod
     def _create_or_rebuild(connection: sqlite3.Connection) -> None:
-        """Create a missing table; rebuild one that lacks the new column."""
-        columns = [
-            row[1] for row in connection.execute(f"PRAGMA table_info({DRAFTS_TABLE})")
-        ]
+        """Create a missing table; rebuild one that lacks the new column.
+
+        Checked again inside the transaction: another process may have
+        migrated between the unlocked check and BEGIN.
+        """
+        columns = _table_columns(connection)
         if not columns:
             _run_step(connection, "create the drafts table", SCHEMA)
         elif NEW_COLUMN not in columns:
@@ -380,37 +386,60 @@ class DraftStore:
         return sqlite3.connect(self._path, timeout=BUSY_TIMEOUT_SECONDS)
 
 
-def _run_step(connection: sqlite3.Connection, step: str, sql: str) -> sqlite3.Cursor:
+def _run_step(
+    connection: sqlite3.Connection, step: str, sql: str, params: tuple = ()
+) -> sqlite3.Cursor:
     """Run one migration statement; any failure names ``step``."""
     try:
-        return connection.execute(sql)
+        return connection.execute(sql, params)
     except sqlite3.Error as error:
         raise DraftMigrationError(step, f"{type(error).__name__}: {error}") from None
 
 
-def _count_rows(connection: sqlite3.Connection, table: str) -> int:
-    """How many rows ``table`` holds."""
-    return connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+def _table_columns(connection: sqlite3.Connection) -> list[str]:
+    """Column names of the drafts table (empty if it does not exist)."""
+    cursor = _run_step(connection, "inspect the drafts table", _TABLE_INFO_SQL)
+    return [row[1] for row in cursor]
+
+
+def _is_current(connection: sqlite3.Connection) -> bool:
+    """True if the drafts table already has the new schema."""
+    return NEW_COLUMN in _table_columns(connection)
+
+
+def _count_rows(connection: sqlite3.Connection, step: str, table: str) -> int:
+    """How many rows ``table`` holds; a failure names ``step``."""
+    cursor = _run_step(connection, step, f"SELECT COUNT(*) FROM {table}")
+    return cursor.fetchone()[0]
 
 
 def _rebuild(connection: sqlite3.Connection) -> None:
     """Rebuild the old table with the new schema, keeping every row and id."""
-    sequence = connection.execute(
-        "SELECT seq FROM sqlite_sequence WHERE name = ?", (DRAFTS_TABLE,)
+    sequence = _run_step(
+        connection,
+        "read the id counter",
+        "SELECT seq FROM sqlite_sequence WHERE name = ?",
+        (DRAFTS_TABLE,),
     ).fetchone()
-    expected = _count_rows(connection, DRAFTS_TABLE)
+    verify = "verify the copied rows"
+    expected = _count_rows(connection, verify, DRAFTS_TABLE)
     for step, sql in _REBUILD_STEPS:
         _run_step(connection, step, sql)
-        if step == STEP_COPY and _count_rows(connection, REBUILT_TABLE) != expected:
-            raise DraftMigrationError(
-                "verify the copied rows", f"expected {expected} rows"
-            )
-    if sequence is not None:  # keep ids from ever being reused
+        if step == STEP_COPY:
+            copied = _count_rows(connection, verify, REBUILT_TABLE)
+            if copied != expected:
+                raise DraftMigrationError(verify, f"expected {expected} rows")
+    if sequence is not None:  # keep ids from ever being reused, even if now empty
+        step = "restore the id counter"
+        params = (DRAFTS_TABLE,)
+        _run_step(
+            connection, step, "DELETE FROM sqlite_sequence WHERE name = ?", params
+        )
         _run_step(
             connection,
-            "restore the id counter",
-            f"UPDATE sqlite_sequence SET seq = {int(sequence[0])}"
-            f" WHERE name = '{DRAFTS_TABLE}'",
+            step,
+            "INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)",
+            (DRAFTS_TABLE, sequence[0]),
         )
 
 
