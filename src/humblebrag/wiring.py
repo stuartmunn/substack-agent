@@ -20,6 +20,7 @@ from humblebrag.approval import ApproveService, install_approve
 from humblebrag.binning import BinService, install_bin
 from humblebrag.bot import install_buttons
 from humblebrag.claude_client import ClaudeClient
+from humblebrag.commands import CommandService, RunCoordinator, install_commands
 from humblebrag.config import Config
 from humblebrag.drafts import Draft, DraftStore, RunGate
 from humblebrag.generator import PostGenerator
@@ -94,14 +95,12 @@ class Runtime:
             send_preview=preview,
             max_pending=config.max_pending_drafts,
         )
-        pipeline = self.pipeline
-
-        async def run_once() -> None:
-            await pipeline.run()
-
-        self.scheduler = Scheduler(
-            config, SchedulerState(self._data_dir / SCHEDULER_STATE_FILENAME), run_once
+        coordinator = RunCoordinator(self.pipeline.run)
+        scheduler_state = SchedulerState(self._data_dir / SCHEDULER_STATE_FILENAME)
+        install_commands(
+            application, CommandService(queue, scheduler_state, config, coordinator)
         )
+        self.scheduler = Scheduler(config, scheduler_state, coordinator.run_scheduled)
 
     async def start(self) -> None:
         """Check the Substack session, then run the daily monitor and scheduler."""

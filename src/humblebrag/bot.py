@@ -38,7 +38,12 @@ GET_UPDATES_POOL_TIMEOUT_SECONDS = 10.0
 COMMANDS: dict[str, str] = {
     "start": "Show the list of commands",
     "help": "Show the list of commands",
+    "seed": "Add a seed to the queue: /seed <text>",
+    "seeds": "List the unused seeds",
+    "skip": "Skip the next scheduled run only",
+    "now": "Run now, without touching the daily schedule",
 }
+HELP_COMMANDS = ["start", "help"]
 ALLOWED_CHAT_KEY = "allowed_chat_id"
 
 
@@ -90,7 +95,7 @@ def build_application(config: Config, store: DraftStore | None = None) -> Applic
     )
     application.bot_data[ALLOWED_CHAT_KEY] = config.telegram_chat_id
     application.add_handler(TypeHandler(Update, guard), group=GUARD_GROUP)
-    application.add_handler(CommandHandler(list(COMMANDS), show_help))
+    application.add_handler(CommandHandler(HELP_COMMANDS, show_help))
     if store is not None:
         install_buttons(application, store)
     return application

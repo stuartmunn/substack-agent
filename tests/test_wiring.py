@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from telegram.ext import CommandHandler
 
 from humblebrag import bot
 from humblebrag.bot import ALLOWED_CHAT_KEY, build_application
@@ -77,6 +78,20 @@ def test_setup_installs_every_handler_and_builds_the_pipeline(tmp_path: Path) ->
     assert runtime.pipeline is not None
     assert runtime.scheduler is not None
     assert (tmp_path / "humblebrag.db").exists()
+
+
+def test_setup_installs_the_four_commands(tmp_path: Path) -> None:
+    """/seed, /seeds, /skip and /now are routed once setup() has run."""
+    config = load_config(ENV)
+    application = build_application(config)
+    Runtime(config, data_dir=tmp_path).setup(application)
+    commands = {
+        command
+        for handler in application.handlers[0]
+        if isinstance(handler, CommandHandler)
+        for command in handler.commands
+    }
+    assert {"start", "help", "seed", "seeds", "skip", "now"} <= commands
 
 
 async def test_start_runs_the_session_checks_and_the_scheduler(
