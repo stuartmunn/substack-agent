@@ -70,7 +70,7 @@ the missing variables (never their values).
 | `TELEGRAM_CHAT_ID` | yes | The only chat allowed to approve, redo or bin (integer) |
 | `ANTHROPIC_API_KEY` | yes | Anthropic API key (secret) |
 | `CLAUDE_MODEL` | yes | Anthropic model used to write posts |
-| `SUBSTACK_PUBLICATION_URL` | yes | Publication to post to |
+| `SUBSTACK_PUBLICATION_URL` | yes | Publication address: `https://<subdomain>.substack.com` or a custom domain (not a profile URL like `https://substack.com/@name`) |
 | `SUBSTACK_COOKIE` | yes | Substack session cookie (secret) |
 | `RUN_TIME` | no | Daily run time, `HH:MM` (default `08:30`) |
 | `TZ` | no | IANA time zone (default `Europe/London`) |

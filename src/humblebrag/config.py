@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import time
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,12 @@ DEFAULT_MIN_POST_WORDS = 250
 DEFAULT_MAX_POST_WORDS = 600
 DEFAULT_MAX_PENDING_DRAFTS = 7
 EXIT_CONFIG_ERROR = 1
+PUBLICATION_URL_SETTING = "SUBSTACK_PUBLICATION_URL"
+PUBLICATION_URL_FORMAT = (
+    "https://<subdomain>.substack.com or a custom domain such as "
+    "https://example.com, not a profile URL like https://substack.com/@name"
+)
+SUBSTACK_PROFILE_HOSTS = frozenset({"substack.com", "www.substack.com"})
 
 
 class ConfigError(Exception):
@@ -68,6 +75,22 @@ def _require(env: Mapping[str, str], name: str, missing: list[str]) -> str:
         missing.append(name)
         return ""
     return value
+
+
+def _parse_publication_url(text: str) -> str:
+    """Return the publication address, rejecting anything that is not one."""
+    problem = f"{PUBLICATION_URL_SETTING} must be {PUBLICATION_URL_FORMAT}"
+    try:
+        parts = urlsplit(text)
+        host = (parts.hostname or "").rstrip(".")
+        _ = parts.port  # raises ValueError for a non-numeric or out-of-range port
+    except ValueError:
+        raise ConfigError(problem) from None
+    if parts.scheme != "https" or not host or host in SUBSTACK_PROFILE_HOSTS:
+        raise ConfigError(problem)
+    if parts.path.strip("/") or parts.query or parts.fragment or "@" in parts.netloc:
+        raise ConfigError(problem)
+    return text
 
 
 def _parse_run_time(text: str) -> time:
@@ -129,7 +152,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         telegram_chat_id=_parse_chat_id(chat_id),
         anthropic_api_key=api_key,
         claude_model=model,
-        substack_publication_url=publication_url,
+        substack_publication_url=_parse_publication_url(publication_url),
         substack_cookie=cookie,
         run_time=_parse_run_time(_read_value(source, "RUN_TIME") or DEFAULT_RUN_TIME),
         tz=_parse_tz(_read_value(source, "TZ") or DEFAULT_TZ),

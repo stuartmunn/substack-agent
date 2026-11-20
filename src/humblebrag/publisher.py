@@ -34,9 +34,18 @@ EDITOR_PATH = "/publish/post/{draft_id}"
 SESSION_ALERT_EVENT = "substack session"
 CHECK_ALERT_EVENT = "substack"
 # Raised by python-substack when the cookie logs in as nobody or the wrong user.
-_NO_PUBLICATION_MARKERS = (
-    "Requested publication is unavailable",
-    "Could not find primary publication",
+_NO_PUBLICATION_MARKERS = ("Could not find primary publication",)
+# Substack's wording for a publication it cannot find. Matched loosely (any case,
+# anywhere in the text) because it comes from an unofficial API and may change.
+_UNAVAILABLE_PUBLICATION = re.compile(
+    r"publication\W+(?:is\W+)?unavailable", re.IGNORECASE
+)
+# Substack gives this same reply for a wrong URL and for a logged-out cookie (an
+# account with no publications), so the alert names the URL first, then the cookie.
+PUBLICATION_UNAVAILABLE_MESSAGE = (
+    "Substack says the publication is unavailable: SUBSTACK_PUBLICATION_URL is "
+    "wrong or unreachable (it should be https://<subdomain>.substack.com or a "
+    "custom domain, not a profile URL), or the cookie is logged out"
 )
 _KNOWN_COOKIE = re.compile(r"^(substack\.sid|connect\.sid|substack\.lli)=")
 
@@ -49,6 +58,10 @@ class SubstackError(Exception):
 
 class DraftError(SubstackError):
     """Creating or updating a Substack draft failed; nothing was published."""
+
+
+class PublicationUnavailableError(SubstackError):
+    """Substack cannot find the configured publication (a wrong URL, usually)."""
 
 
 class SubstackAuthError(SubstackError):
@@ -118,7 +131,12 @@ class SubstackPublisher:
             ) from None
         except SubstackRequestException as error:
             self._log_failure(error)
-            if str(error.message or "").startswith(_NO_PUBLICATION_MARKERS):
+            reply = str(error.message or "")
+            if _UNAVAILABLE_PUBLICATION.search(reply):
+                raise PublicationUnavailableError(
+                    PUBLICATION_UNAVAILABLE_MESSAGE
+                ) from None
+            if reply.startswith(_NO_PUBLICATION_MARKERS):
                 raise SubstackAuthError(SESSION_EXPIRED_MESSAGE) from None
             raise SubstackError("Substack gave an unusable reply") from None
         except requests.RequestException as error:
@@ -149,6 +167,12 @@ class SubstackPublisher:
             await alert(
                 SESSION_ALERT_EVENT,
                 f"{SESSION_EXPIRED_MESSAGE}. Runbook: {RUNBOOK_URL}",
+            )
+            raise
+        except PublicationUnavailableError as error:
+            await alert(
+                CHECK_ALERT_EVENT,
+                f"{error}. Check the URL first, then see the cookie steps: {RUNBOOK_URL}",
             )
             raise
         except SubstackError as error:
