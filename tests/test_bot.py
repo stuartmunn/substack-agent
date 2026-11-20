@@ -267,7 +267,7 @@ def test_start_and_help_are_registered_as_commands(config: Config) -> None:
 
 
 def test_help_lists_the_new_commands() -> None:
-    """SA-36: /help mentions /seed, /seeds, /skip and /now."""
+    """SA-36/SA-45: /help mentions /seed, /seeds, /unseed, /skip and /now."""
     text = bot.help_text()
-    for name in ("seed", "seeds", "skip", "now"):
+    for name in ("seed", "seeds", "unseed", "skip", "now"):
         assert f"/{name} " in text

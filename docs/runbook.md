@@ -144,7 +144,10 @@ settled, publishing stays a manual step in the editor.
 ## Edit `seed.md` by hand
 
 For a quick add, use Telegram instead: `/seed <text>` appends a seed and
-`/seeds` lists the unused ones.
+`/seeds` lists the unused ones. To drop an unused seed, send `/unseed <number>`
+using its number from `/seeds`; the bot replies with the seed's text, so you
+can spot a wrong pick (add it again with `/seed`). It refuses a seed that a
+pending draft has reserved: Bin or Approve that draft first.
 
 To edit the file itself, copy it out of the container, edit it, and copy it back:
 
@@ -155,7 +158,11 @@ To edit the file itself, copy it out of the container, edit it, and copy it back
 Rules (the agent never rewrites lines other than the one it ticks):
 
 - One seed per line: `- [ ] An unused seed`, `- [x] A used seed (used 2026-11-17)`,
-  `- [ ] An invented seed (generated)`. Seeds are used oldest-first.
+  `- [x] A dropped seed (skipped 2026-11-20)`, `- [ ] An invented seed (generated)`.
+  Seeds are used oldest-first. `(skipped ...)` is what `/unseed` writes; the
+  seed is kept for history, is never picked or listed, and still counts as
+  known when the agent invents a new seed. `(generated)` is kept if it was
+  there, in front of the date.
 - Any other line (blank lines, `# comments`) is left exactly as you wrote it.
 - Seeds are identified by their text, so avoid duplicate lines.
 - **Don't change or delete the text of a seed that has a pending draft.** The

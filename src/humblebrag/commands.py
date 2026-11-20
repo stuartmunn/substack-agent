@@ -1,4 +1,4 @@
-"""Telegram commands: /seed, /seeds, /skip and /now.
+"""Telegram commands: /seed, /seeds, /unseed, /skip and /now.
 
 They let Stuart manage the queue and runs from the chat. The chat guard in
 ``bot`` already drops every other chat, so nothing here repeats that check.
@@ -18,7 +18,12 @@ from humblebrag.alerts import alert, describe_error
 from humblebrag.config import Config
 from humblebrag.drafts import Draft
 from humblebrag.scheduler import SchedulerState
-from humblebrag.seed_queue import InvalidSeedError, SeedQueue
+from humblebrag.seed_queue import (
+    InvalidSeedError,
+    InvalidSeedNumberError,
+    SeedInUseError,
+    SeedQueue,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +31,7 @@ ALERT_EVENT = "command"
 SEEDS_SHOWN = 20
 SEED_PREVIEW_LENGTH = 120
 ELLIPSIS = "…"
+UNSEED_MAX_DIGITS = 9
 
 SEED_USAGE = "Say what the seed is about: /seed <text>"
 SEED_ADDED = "Added to the queue ({count} unused): {text}"
@@ -33,6 +39,9 @@ SEED_REJECTED = "Not added. {reason}"
 SEEDS_EMPTY = "No unused seeds. The next run will invent one."
 SEEDS_HEADER = "{count} unused seeds, in order:"
 SEEDS_MORE = "...and {more} more"
+UNSEED_USAGE = "Say which seed by its number from /seeds: /unseed <number>"
+UNSEEDED = "Skipped, so it won't be used: {text}\nAdd it again with /seed if you change your mind."
+UNSEED_REFUSED = "Not skipped. {reason}"
 SKIPPED = "Skipping the run on {day}. Later runs are unaffected."
 NOW_STARTED = "Starting a run now."
 NOW_BUSY = "A run is already in progress."
@@ -70,8 +79,16 @@ def _shorten(text: str) -> str:
     return text[: SEED_PREVIEW_LENGTH - len(ELLIPSIS)] + ELLIPSIS
 
 
+def _is_seed_number(args: list[str]) -> bool:
+    """True if ``args`` is one plain, short, ASCII number (so ``int()`` is safe)."""
+    if len(args) != 1:
+        return False
+    word = args[0]
+    return word.isascii() and word.isdigit() and len(word) <= UNSEED_MAX_DIGITS
+
+
 class CommandService:
-    """Handles the four commands."""
+    """Handles the five commands."""
 
     def __init__(
         self,
@@ -129,6 +146,25 @@ class CommandService:
             lines.append(SEEDS_MORE.format(more=len(texts) - SEEDS_SHOWN))
         await self._reply(update, "\n".join(lines))
 
+    async def on_unseed(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """``/unseed <number>``: skip the numbered unused seed and confirm its text."""
+        args = context.args or []
+        if not _is_seed_number(args):
+            await self._reply(update, UNSEED_USAGE)
+            return
+        try:
+            text = await asyncio.to_thread(self._queue.skip_seed, int(args[0]))
+        except (InvalidSeedNumberError, SeedInUseError) as error:
+            await self._reply(update, UNSEED_REFUSED.format(reason=error))
+            return
+        except Exception as error:  # a failed command must never kill the bot
+            logger.exception("Command /unseed failed")
+            await self._fail(update, "/unseed", error)
+            return
+        await self._reply(update, UNSEEDED.format(text=text))
+
     async def on_skip(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """``/skip``: suppress the next scheduled run only, and say which day."""
         try:
@@ -178,8 +214,9 @@ class CommandService:
 
 
 def install_commands(application: Application, service: CommandService) -> None:
-    """Route the four commands to the service."""
+    """Route the five commands to the service."""
     application.add_handler(CommandHandler("seed", service.on_seed))
     application.add_handler(CommandHandler("seeds", service.on_seeds))
+    application.add_handler(CommandHandler("unseed", service.on_unseed))
     application.add_handler(CommandHandler("skip", service.on_skip))
     application.add_handler(CommandHandler("now", service.on_now))

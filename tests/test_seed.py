@@ -322,3 +322,166 @@ def test_used_marker_on_an_unchecked_line_is_kept_as_text(tmp_path: Path) -> Non
     )
     assert seed_file.seeds[0].text == "Retrospective (used 2024-01-01)"
     assert seed_file.seeds[0].used_date == TODAY
+
+
+# SA-45: the skipped format
+
+
+def test_skipped_line_parses_with_its_date() -> None:
+    """SA-45 AC3: `- [x] <text> (skipped YYYY-MM-DD)` is a skipped seed."""
+    parsed = parse_seed_line("- [x] Toast thoughts (skipped 2026-11-19)")
+    assert parsed == Seed(
+        0, "Toast thoughts", True, None, False, skipped_date=date(2026, 11, 19)
+    )
+
+
+def test_skipped_keeps_the_generated_marker_in_either_order() -> None:
+    """SA-45 AC2/AC3: (generated) survives alongside (skipped ...)."""
+    canonical = parse_seed_line("- [x] Idea (generated) (skipped 2026-11-19)")
+    swapped = parse_seed_line("- [x] Idea (skipped 2026-11-19) (generated)")
+    assert canonical == swapped
+    assert canonical.generated is True
+    assert canonical.text == "Idea"
+
+
+@pytest.mark.parametrize(
+    ("line", "text", "skipped_on"),
+    [
+        (
+            "- [ ] Retrospective (skipped 2024-01-01)",
+            "Retrospective (skipped 2024-01-01)",
+            None,
+        ),
+        ("- [x] Odd (skipped 2024-13-45)", "Odd (skipped 2024-13-45)", None),
+        (
+            "- [x] Twice (skipped 2024-01-01) (skipped 2024-01-02)",
+            "Twice (skipped 2024-01-01)",
+            date(2024, 1, 2),
+        ),
+    ],
+)
+def test_a_skipped_suffix_that_contradicts_the_format_stays_in_the_text(
+    line: str, text: str, skipped_on: date | None
+) -> None:
+    """PY-08: on an unchecked line, with an impossible date, or as a second
+    status suffix, `(skipped ...)` is kept as text, never silently dropped."""
+    parsed = parse_seed_line(line)
+    assert parsed is not None
+    assert parsed.text == text
+    assert parsed.skipped_date == skipped_on
+
+
+def test_only_the_last_status_suffix_counts() -> None:
+    """A checked line has one status: the trailing one; the other stays text."""
+    used_last = parse_seed_line("- [x] Two (skipped 2024-01-01) (used 2024-01-02)")
+    assert used_last == Seed(
+        0, "Two (skipped 2024-01-01)", True, date(2024, 1, 2), False
+    )
+    skipped_last = parse_seed_line("- [x] Two (used 2024-01-01) (skipped 2024-01-02)")
+    assert skipped_last == Seed(
+        0, "Two (used 2024-01-01)", True, None, False, skipped_date=date(2024, 1, 2)
+    )
+
+
+def test_skipped_line_with_windows_line_endings_parses() -> None:
+    """PY-09: a CRLF file's skipped lines parse like any other."""
+    parsed = parse_seed_line("- [x] Toast (skipped 2026-11-19)\r")
+    assert parsed is not None
+    assert parsed.text == "Toast"
+    assert parsed.skipped_date == date(2026, 11, 19)
+
+
+def test_format_seed_line_writes_the_skipped_format() -> None:
+    """SA-45 AC2: the canonical skipped line, with and without (generated)."""
+    assert (
+        format_seed_line("Idea", None, False, skipped_on=TODAY)
+        == "- [x] Idea (skipped 2026-11-17)"
+    )
+    assert (
+        format_seed_line("Idea", None, True, skipped_on=TODAY)
+        == "- [x] Idea (generated) (skipped 2026-11-17)"
+    )
+
+
+def test_a_seed_cannot_be_both_used_and_skipped() -> None:
+    """The formatter refuses the contradictory combination."""
+    with pytest.raises(ValueError, match="both"):
+        format_seed_line("Idea", TODAY, False, skipped_on=TODAY)
+
+
+def test_mark_skipped_changes_only_that_line_and_keeps_generated(
+    tmp_path: Path,
+) -> None:
+    """SA-45 AC2/AC6: one line is rewritten; every other line is untouched."""
+    path = _write(tmp_path / "seed.md", HAND_EDITED)
+    seed_file = SeedFile.load(path)
+    target = next(s for s in seed_file.unused if s.generated)
+    seed_file.mark_skipped(target, TODAY)
+    expected = HAND_EDITED.replace(
+        "- [ ] An invented one (generated)",
+        "- [x] An invented one (generated) (skipped 2026-11-17)",
+    )
+    assert seed_file.text == expected
+    skipped = [s for s in seed_file.seeds if s.skipped_date]
+    assert [(s.text, s.generated, s.skipped_date) for s in skipped] == [
+        ("An invented one", True, TODAY)
+    ]
+
+
+def test_skipped_seeds_are_not_unused_but_are_still_seeds(tmp_path: Path) -> None:
+    """SA-45 AC3: skipped seeds drop out of `unused` but stay in `seeds`."""
+    path = _write(tmp_path / "seed.md", "- [ ] keep\n- [x] gone (skipped 2026-11-19)\n")
+    seed_file = SeedFile.load(path)
+    assert [s.text for s in seed_file.unused] == ["keep"]
+    assert [s.text for s in seed_file.seeds] == ["keep", "gone"]
+
+
+def test_skipped_line_survives_a_save_and_reload(tmp_path: Path) -> None:
+    """SA-45 AC2/AC6: the written file parses back to the same skipped seed."""
+    path = _write(tmp_path / "seed.md", "- [ ] one\r\n- [ ] two (generated)\r\n")
+    seed_file = SeedFile.load(path)
+    seed_file.mark_skipped(seed_file.unused[1], TODAY)
+    seed_file.save()
+    assert path.read_bytes() == (
+        b"- [ ] one\r\n- [x] two (generated) (skipped 2026-11-17)\r\n"
+    )
+    reloaded = SeedFile.load(path)
+    assert [s.text for s in reloaded.unused] == ["one"]
+    assert reloaded.seeds[1].skipped_date == TODAY
+
+
+def test_stale_used_or_skipped_seeds_cannot_be_skipped(tmp_path: Path) -> None:
+    """The same guards as mark_used: stale lines and checked lines are refused."""
+    path = _write(tmp_path / "seed.md", "- [ ] one\n- [x] two (used 2026-11-01)\n")
+    seed_file = SeedFile.load(path)
+    used = seed_file.seeds[1]
+    with pytest.raises(ValueError, match="already used"):
+        seed_file.mark_skipped(used, TODAY)
+    stale = seed_file.unused[0]
+    other = SeedFile.load(_write(tmp_path / "other.md", "\n\n- [ ] elsewhere\n"))
+    with pytest.raises(ValueError, match="stale"):
+        other.mark_skipped(stale, TODAY)
+
+
+def test_files_without_skipped_lines_parse_exactly_as_before() -> None:
+    """SA-45: an existing seed.md has no `(skipped ...)` lines, so nothing in it
+    changes meaning (the skipped date is None everywhere)."""
+    seed_file = SeedFile(Path("seed.md"), HAND_EDITED.split("\n"))
+    assert all(seed.skipped_date is None for seed in seed_file.seeds)
+    assert [(s.text, s.used, s.used_date, s.generated) for s in seed_file.seeds] == [
+        (
+            "Rebranding my morning toast as a thought-leadership journey",
+            False,
+            None,
+            False,
+        ),
+        ("Humbled to announce my lunch", True, date(2026, 11, 1), False),
+        (
+            "Why failing at parallel parking taught me agile",
+            True,
+            date(2026, 11, 10),
+            True,
+        ),
+        ("An invented one", False, None, True),
+    ]
+    assert seed_file.text == HAND_EDITED

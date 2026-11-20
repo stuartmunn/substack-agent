@@ -4,12 +4,15 @@ Format (one seed per line; every other line is preserved untouched):
 
     - [ ] <text>                              unused
     - [x] <text> (used YYYY-MM-DD)            used
+    - [x] <text> (skipped YYYY-MM-DD)         dropped from the queue (/unseed)
     - [ ] <text> (generated)                  invented by the agent, unused
     - [x] <text> (generated) (used YYYY-MM-DD)
+    - [x] <text> (generated) (skipped YYYY-MM-DD)
 
-Trailing `(generated)` and, on checked lines only, `(used YYYY-MM-DD)` are
-metadata. A trailing `(used ...)` on an unchecked line contradicts the format,
-so it is kept as part of the seed's text.
+Trailing `(generated)` and, on checked lines only, one of `(used YYYY-MM-DD)` or
+`(skipped YYYY-MM-DD)` are metadata. A trailing `(used ...)` or `(skipped ...)`
+on an unchecked line contradicts the format, so it is kept as part of the
+seed's text; so is a second status suffix on a checked line.
 """
 
 import logging
@@ -27,7 +30,9 @@ FILE_MODE = 0o644
 ENCODING = "utf-8"
 _SEED_LINE = re.compile(r"^- \[(?P<mark>[ xX])\] (?P<rest>\S.*)$")
 _USED_SUFFIX = re.compile(r"\s+\(used (?P<date>\d{4}-\d{2}-\d{2})\)\s*$")
+_SKIPPED_SUFFIX = re.compile(r"\s+\(skipped (?P<date>\d{4}-\d{2}-\d{2})\)\s*$")
 _GENERATED_SUFFIX = re.compile(r"\s+\(generated\)\s*$")
+_STATUS_SUFFIXES = (("used", _USED_SUFFIX), ("skipped", _SKIPPED_SUFFIX))
 
 
 class SeedFileError(Exception):
@@ -43,6 +48,24 @@ class Seed:
     used: bool
     used_date: date | None
     generated: bool
+    skipped_date: date | None = None
+
+
+def _strip_status(rest: str) -> tuple[str, str, date] | None:
+    """Split a trailing ``(used ...)`` or ``(skipped ...)`` off ``rest``.
+
+    Returns the text before it, which suffix it was and its date, or None if
+    there is no such suffix or its date is not a real date.
+    """
+    for kind, pattern in _STATUS_SUFFIXES:
+        match = pattern.search(rest)
+        if match is None:
+            continue
+        try:
+            return rest[: match.start()], kind, date.fromisoformat(match.group("date"))
+        except ValueError:
+            return None
+    return None
 
 
 def parse_seed_line(line: str, line_index: int = 0) -> Seed | None:
@@ -53,15 +76,20 @@ def parse_seed_line(line: str, line_index: int = 0) -> Seed | None:
     rest = match.group("rest").rstrip()
     checked = match.group("mark") != " "
     used_date: date | None = None
+    skipped_date: date | None = None
     generated = False
     while True:
-        used_match = _USED_SUFFIX.search(rest) if checked else None
-        if used_match and used_date is None:
-            try:
-                used_date = date.fromisoformat(used_match.group("date"))
-            except ValueError:
-                break
-            rest = rest[: used_match.start()]
+        status = (
+            _strip_status(rest)
+            if checked and used_date is None and skipped_date is None
+            else None
+        )
+        if status is not None:
+            rest, kind, when = status
+            if kind == "used":
+                used_date = when
+            else:
+                skipped_date = when
             continue
         generated_match = _GENERATED_SUFFIX.search(rest)
         if generated_match and not generated:
@@ -72,7 +100,7 @@ def parse_seed_line(line: str, line_index: int = 0) -> Seed | None:
     text = rest.strip()
     if not text:
         return None
-    return Seed(line_index, text, checked, used_date, generated)
+    return Seed(line_index, text, checked, used_date, generated, skipped_date)
 
 
 def seed_key(text: str) -> str:
@@ -80,13 +108,22 @@ def seed_key(text: str) -> str:
     return " ".join(text.split()).casefold()
 
 
-def format_seed_line(text: str, used_on: date | None, generated: bool) -> str:
-    """Build the canonical line for a seed."""
-    parts = [f"- [{'x' if used_on else ' '}] {text}"]
+def format_seed_line(
+    text: str,
+    used_on: date | None,
+    generated: bool,
+    skipped_on: date | None = None,
+) -> str:
+    """Build the canonical line for a seed (a seed is used or skipped, not both)."""
+    if used_on and skipped_on:
+        raise ValueError("A seed cannot be both used and skipped")
+    parts = [f"- [{'x' if used_on or skipped_on else ' '}] {text}"]
     if generated:
         parts.append("(generated)")
     if used_on:
         parts.append(f"(used {used_on.isoformat()})")
+    if skipped_on:
+        parts.append(f"(skipped {skipped_on.isoformat()})")
     return " ".join(parts)
 
 
@@ -146,6 +183,16 @@ class SeedFile:
 
     def mark_used(self, seed: Seed, on: date) -> None:
         """Rewrite only ``seed``'s line as used on ``on``."""
+        self._rewrite(seed, format_seed_line(seed.text, on, seed.generated))
+
+    def mark_skipped(self, seed: Seed, on: date) -> None:
+        """Rewrite only ``seed``'s line as skipped on ``on``, keeping (generated)."""
+        line = format_seed_line(seed.text, None, seed.generated, skipped_on=on)
+        self._rewrite(seed, line)
+
+    def _rewrite(self, seed: Seed, new_line: str) -> None:
+        """Replace ``seed``'s own line (keeping its CR) after checking it is
+        still the same, unchecked seed that was read."""
         in_range = 0 <= seed.line_index < len(self._lines)
         current = (
             parse_seed_line(self._lines[seed.line_index], seed.line_index)
@@ -158,7 +205,6 @@ class SeedFile:
             raise ValueError("Seed is already used")
         line = self._lines[seed.line_index]
         carriage_return = "\r" if line.endswith("\r") else ""
-        new_line = format_seed_line(seed.text, on, seed.generated)
         self._lines[seed.line_index] = new_line + carriage_return
 
     def append_seed(self, text: str, generated: bool = False) -> None:

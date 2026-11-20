@@ -40,6 +40,14 @@ class InvalidSeedError(ValueError):
     """Seed text typed by the user cannot be added to the queue."""
 
 
+class InvalidSeedNumberError(ValueError):
+    """``/unseed`` was given a number that is not in the unused list."""
+
+
+class SeedInUseError(Exception):
+    """The seed is reserved by a pending draft, so it cannot be skipped yet."""
+
+
 class ReservationError(Exception):
     """Base class for seed reservation failures (the caller should alert)."""
 
@@ -58,6 +66,13 @@ class ReservationBusyError(ReservationError):
 
 class ReservationStateError(ReservationError):
     """The reservations file exists but cannot be understood."""
+
+
+def _number_range_message(unused_count: int) -> str:
+    """Tell Stuart which numbers ``/unseed`` accepts."""
+    if unused_count == 0:
+        return "There are no unused seeds."
+    return f"Pick a number from 1 to {unused_count}, as listed by /seeds."
 
 
 class SeedQueue:
@@ -150,6 +165,32 @@ class SeedQueue:
             seed_file.append_seed(cleaned)
             seed_file.save()
             return AddedSeed(cleaned, len(seed_file.unused))
+
+    def skip_seed(self, number: int) -> str:
+        """Mark the unused seed at ``number`` (1-based, as ``/seeds`` lists them)
+        as skipped today, and return its text.
+
+        The seed stays in the file as ``- [x] <text> (skipped YYYY-MM-DD)``, so it
+        is never picked or listed again but still counts as known. The check
+        and the write happen under one lock.
+
+        Raises InvalidSeedNumberError if ``number`` is not in the list, and
+        SeedInUseError if a pending draft has reserved the seed.
+        """
+        with self._locked():
+            seed_file = SeedFile.load(self._seed_path)
+            unused = seed_file.unused
+            if not 1 <= number <= len(unused):
+                raise InvalidSeedNumberError(_number_range_message(len(unused)))
+            target = unused[number - 1]
+            if target.text in self._load_reservations().values():
+                raise SeedInUseError(
+                    "That seed is reserved by a pending draft. "
+                    "Bin or Approve that draft first, then try again."
+                )
+            seed_file.mark_skipped(target, self._today())
+            seed_file.save()
+            return target.text
 
     def add_generated(self, text: str, draft_id: str) -> Seed | None:
         """Append ``text`` as a ``(generated)`` seed and reserve one for the draft.
