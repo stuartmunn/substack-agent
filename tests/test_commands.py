@@ -1,7 +1,8 @@
-"""Tests for /seed, /seeds, /skip and /now (SA-36 acceptance criteria)."""
+"""Tests for /seed, /seeds, /unseed, /skip and /now (SA-36 and SA-45)."""
 
 import asyncio
 import fcntl
+import threading
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ from humblebrag.commands import (
     SEED_USAGE,
     SEEDS_EMPTY,
     SEEDS_SHOWN,
+    UNSEED_USAGE,
     CommandService,
     RunCoordinator,
     install_commands,
@@ -378,13 +380,19 @@ async def test_a_failed_failure_reply_is_logged_not_raised(
     assert "Could not tell the chat" in caplog.text
 
 
-def test_install_registers_the_four_commands() -> None:
-    """All four commands are routed to the service."""
+def test_install_registers_the_five_commands() -> None:
+    """All five commands are routed to the service."""
     handlers: list[Any] = []
     application = SimpleNamespace(add_handler=handlers.append)
-    service = SimpleNamespace(on_seed=1, on_seeds=2, on_skip=3, on_now=4)
+    service = SimpleNamespace(on_seed=1, on_seeds=2, on_unseed=3, on_skip=4, on_now=5)
     install_commands(application, service)  # type: ignore[arg-type]
-    assert [min(h.commands) for h in handlers] == ["seed", "seeds", "skip", "now"]
+    assert [min(h.commands) for h in handlers] == [
+        "seed",
+        "seeds",
+        "unseed",
+        "skip",
+        "now",
+    ]
 
 
 def test_the_count_is_taken_under_the_same_lock_as_the_append(rig: Rig) -> None:
@@ -412,3 +420,119 @@ def test_skip_next_run_names_today_until_it_is_claimed(rig: Rig) -> None:
     assert rig.state.skip_next_run(TODAY) == TODAY
     rig.state.claim(TODAY)
     assert rig.state.skip_next_run(TODAY) == date(2026, 11, 19)
+
+
+# SA-45: /unseed
+
+
+async def test_unseed_skips_the_numbered_seed_and_confirms_its_text(rig: Rig) -> None:
+    """SA-45 AC1/AC2: /unseed 2 skips the 2nd listed seed and echoes its text."""
+    await rig.say("on_seeds")
+    assert "2. Second seed" in rig.replies[0]
+    await rig.say("on_unseed", "2")
+    assert rig.replies[1].startswith("Skipped, so it won't be used: Second seed")
+    assert rig.seed_path.read_text() == (
+        "- [ ] First seed\n- [x] Old seed (used 2026-11-01)\n"
+        "- [x] Second seed (skipped 2026-11-18)\n"
+    )
+
+
+async def test_a_skipped_seed_is_no_longer_listed_by_seeds(rig: Rig) -> None:
+    """SA-45 AC3: /seeds after /unseed shows the shorter list, renumbered."""
+    await rig.say("on_unseed", "1")
+    await rig.say("on_seeds")
+    assert rig.replies[1] == "1 unused seeds, in order:\n1. Second seed"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [[], ["abc"], ["1", "2"], ["-1"], ["1.5"], ["\u00b2"], ["\u0663"], [""], ["1e3"]],
+)
+async def test_unseed_with_a_missing_or_non_numeric_argument_is_refused(
+    rig: Rig, args: list[str]
+) -> None:
+    """SA-45 AC4: bad arguments get the usage line and change nothing."""
+    await rig.say("on_unseed", *args)
+    assert rig.replies == [UNSEED_USAGE]
+    assert rig.seed_path.read_text() == SEEDS
+
+
+@pytest.mark.parametrize("number", ["0", "3", "99", "9" * 9])
+async def test_unseed_with_a_number_outside_the_list_is_refused(
+    rig: Rig, number: str
+) -> None:
+    """SA-45 AC4: out of range says which numbers are valid; nothing changes."""
+    await rig.say("on_unseed", number)
+    assert rig.replies == [
+        "Not skipped. Pick a number from 1 to 2, as listed by /seeds."
+    ]
+    assert rig.seed_path.read_text() == SEEDS
+
+
+@pytest.mark.parametrize("number", ["9" * 10, "9" * 5000])
+async def test_unseed_with_an_absurdly_long_number_is_refused_not_a_crash(
+    rig: Rig, number: str
+) -> None:
+    """SA-45 AC4: int() would raise on thousands of digits; the usage line is
+    sent instead and nothing changes."""
+    await rig.say("on_unseed", number)
+    assert rig.replies == [UNSEED_USAGE]
+    assert rig.seed_path.read_text() == SEEDS
+
+
+async def test_unseed_of_a_seed_reserved_by_a_pending_draft_is_refused(
+    rig: Rig, alerts: list[str]
+) -> None:
+    """SA-45 AC5: the reply tells Stuart to Bin or Approve the draft first; it
+    is a refusal, not a failure, so no alert."""
+    rig.queue.pick("draft-1")
+    await rig.say("on_unseed", "1")
+    reply = (
+        "Not skipped. That seed is reserved by a pending draft. "
+        "Bin or Approve that draft first, then try again."
+    )
+    assert rig.replies == [reply]
+    assert rig.seed_path.read_text() == SEEDS
+    assert alerts == []
+
+
+async def test_seed_can_add_a_skipped_seed_again(rig: Rig) -> None:
+    """SA-45 AC7: after /unseed, /seed with the same text adds a fresh unused seed."""
+    await rig.say("on_unseed", "1")
+    await rig.say("on_seed", "First", "seed")
+    assert rig.replies[1] == "Added to the queue (2 unused): First seed"
+    assert rig.queue.unused_texts() == ["Second seed", "First seed"]
+    assert "- [x] First seed (skipped 2026-11-18)" in rig.seed_path.read_text()
+
+
+async def test_unseed_failure_alerts_and_tells_the_chat(
+    rig: Rig, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ERR-01/TST-04: a broken queue is an alert and a reply, not a crash."""
+
+    def broken(_number: int) -> str:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(rig.queue, "skip_seed", broken)
+    await rig.say("on_unseed", "1")
+    assert rig.replies == [FAILED]
+    assert len(alerts) == 1
+    assert "/unseed" in alerts[0]
+    assert "disk full" in alerts[0]
+
+
+async def test_unseed_waits_for_the_lock_in_a_worker_thread(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ERR-13: the blocking queue call runs off the event loop."""
+    threads: list[int] = []
+    real = rig.queue.skip_seed
+
+    def spy(number: int) -> str:
+        threads.append(threading.get_ident())
+        return real(number)
+
+    monkeypatch.setattr(rig.queue, "skip_seed", spy)
+    await rig.say("on_unseed", "1")
+    assert threads
+    assert threads[0] != threading.get_ident()

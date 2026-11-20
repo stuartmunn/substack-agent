@@ -10,8 +10,11 @@ import pytest
 from humblebrag import seed_queue
 from humblebrag.seed_queue import (
     RESERVATIONS_FILENAME,
+    InvalidSeedError,
+    InvalidSeedNumberError,
     ReservationBusyError,
     ReservationStateError,
+    SeedInUseError,
     SeedNotFoundError,
     SeedQueue,
     UnknownDraftError,
@@ -317,3 +320,159 @@ def test_crash_between_marking_used_and_releasing_is_recoverable(
     nxt = queue.pick("draft-2")
     assert nxt is not None
     assert nxt.text == "Second unused"
+
+
+# SA-45: skipping an unused seed by its number
+
+
+def test_skip_seed_marks_the_numbered_unused_seed_and_returns_its_text(
+    seed_path: Path,
+) -> None:
+    """SA-45 AC1/AC2: number 2 of the unused list is skipped, dated today, and
+    every other line is byte-for-byte what it was."""
+    queue = _queue(seed_path)
+    assert queue.skip_seed(2) == "Second unused"
+    assert seed_path.read_text() == SEED_FILE.replace(
+        "- [ ] Second unused", "- [x] Second unused (skipped 2026-11-17)"
+    )
+
+
+def test_skip_seed_keeps_the_generated_marker(seed_path: Path) -> None:
+    """SA-45 AC2: skipping an invented seed keeps (generated)."""
+    assert _queue(seed_path).skip_seed(3) == "Third unused"
+    assert (
+        "- [x] Third unused (generated) (skipped 2026-11-17)" in seed_path.read_text()
+    )
+
+
+def test_skipped_seeds_are_not_picked_or_listed(seed_path: Path) -> None:
+    """SA-45 AC3: a skipped seed is out of the queue, in order, for good."""
+    queue = _queue(seed_path)
+    queue.skip_seed(1)
+    assert queue.unused_texts() == ["Second unused", "Third unused"]
+    picked = queue.pick("draft-1")
+    assert picked is not None
+    assert picked.text == "Second unused"
+
+
+def test_skipped_seeds_still_count_as_known_when_a_seed_is_invented(
+    seed_path: Path,
+) -> None:
+    """SA-45 AC3: inventing a seed identical to a skipped one is a duplicate."""
+    queue = _queue(seed_path)
+    queue.skip_seed(1)
+    before = seed_path.read_text()
+    assert "First unused" in queue.seed_texts()
+    assert queue.add_generated("first   UNUSED", "draft-1") is None
+    assert seed_path.read_text() == before
+
+
+def test_the_same_text_can_be_added_again_after_skipping(seed_path: Path) -> None:
+    """SA-45 AC7: /seed re-adds a skipped seed as a new unused line at the end,
+    leaving the skipped line in place as history."""
+    queue = _queue(seed_path)
+    queue.skip_seed(1)
+    added = queue.add_seed("First unused")
+    assert added.text == "First unused"
+    text = seed_path.read_text()
+    assert "- [x] First unused (skipped 2026-11-17)" in text
+    assert text.rstrip("\n").endswith("- [ ] First unused")
+    assert queue.unused_texts() == ["Second unused", "Third unused", "First unused"]
+
+
+def test_the_re_added_seed_can_be_skipped_again(seed_path: Path) -> None:
+    """The re-added copy is an ordinary unused seed, skippable in its turn."""
+    queue = _queue(seed_path)
+    queue.skip_seed(1)
+    queue.add_seed("First unused")
+    assert queue.skip_seed(3) == "First unused"
+    assert queue.unused_texts() == ["Second unused", "Third unused"]
+
+
+@pytest.mark.parametrize("number", [0, -1, 4, 99, 10**30])
+def test_skip_seed_refuses_a_number_outside_the_list(
+    seed_path: Path, number: int
+) -> None:
+    """SA-45 AC4/PY-07: the documented error, not IndexError; nothing changes."""
+    with pytest.raises(InvalidSeedNumberError, match="1 to 3"):
+        _queue(seed_path).skip_seed(number)
+    assert seed_path.read_text() == SEED_FILE
+
+
+def test_skip_seed_with_nothing_unused_says_so(tmp_path: Path) -> None:
+    """SA-45 AC4: an empty queue has no valid number."""
+    path = tmp_path / "seed.md"
+    path.write_text("- [x] done (used 2026-11-01)\n")
+    with pytest.raises(InvalidSeedNumberError, match="no unused seeds"):
+        _queue(path).skip_seed(1)
+    assert path.read_text() == "- [x] done (used 2026-11-01)\n"
+
+
+def test_skip_seed_refuses_a_seed_reserved_by_a_pending_draft(
+    seed_path: Path,
+) -> None:
+    """SA-45 AC5: the reserved seed (first unused) cannot be skipped; the reply
+    names the fix; nothing changes."""
+    queue = _queue(seed_path)
+    queue.pick("draft-1")
+    with pytest.raises(SeedInUseError, match="Bin or Approve that draft first"):
+        queue.skip_seed(1)
+    assert seed_path.read_text() == SEED_FILE
+    assert queue.skip_seed(2) == "Second unused"  # others are still fine
+
+
+def test_a_reserved_seed_can_be_skipped_once_the_draft_is_binned(
+    seed_path: Path,
+) -> None:
+    """SA-45 AC5: the refusal lasts only while the reservation does."""
+    queue = _queue(seed_path)
+    queue.pick("draft-1")
+    queue.bin_draft("draft-1")
+    assert queue.skip_seed(1) == "First unused"
+
+
+def test_skip_seed_waits_for_the_lock_then_fails_with_a_typed_error(
+    seed_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-45 AC6/ERR-11: it takes the existing lock; a stuck lock is a bounded
+    wait and a typed error, and nothing is written."""
+    monkeypatch.setattr(seed_queue, "LOCK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(seed_queue, "LOCK_POLL_SECONDS", 0.01)
+    holder = _hold_lock(seed_path)
+    try:
+        with pytest.raises(ReservationBusyError):
+            _queue(seed_path).skip_seed(1)
+    finally:
+        holder.close()  # type: ignore[attr-defined]
+    assert seed_path.read_text() == SEED_FILE
+
+
+def test_skip_seed_writes_atomically(
+    seed_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-45 AC6: a failed write leaves the original file and no temp files."""
+
+    def failing_replace(_source: Path, _target: Path) -> None:
+        raise OSError("disk exploded")
+
+    monkeypatch.setattr("humblebrag.seed.os.replace", failing_replace)
+    with pytest.raises(OSError, match="disk exploded"):
+        _queue(seed_path).skip_seed(1)
+    assert seed_path.read_text() == SEED_FILE
+    assert [p.name for p in seed_path.parent.iterdir() if p.name.startswith(".")] == []
+
+
+def test_skip_seed_rejects_reservation_state_it_cannot_read(
+    seed_path: Path,
+) -> None:
+    """A corrupt reservations file is the usual typed error, not a skip."""
+    (seed_path.parent / RESERVATIONS_FILENAME).write_text("not json")
+    with pytest.raises(ReservationStateError):
+        _queue(seed_path).skip_seed(1)
+    assert seed_path.read_text() == SEED_FILE
+
+
+def test_invalid_seed_error_is_still_what_add_seed_raises(seed_path: Path) -> None:
+    """Skipping does not change /seed's own refusals."""
+    with pytest.raises(InvalidSeedError):
+        _queue(seed_path).add_seed("First unused")

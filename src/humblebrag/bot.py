@@ -40,6 +40,7 @@ COMMANDS: dict[str, str] = {
     "help": "Show the list of commands",
     "seed": "Add a seed to the queue: /seed <text>",
     "seeds": "List the unused seeds",
+    "unseed": "Skip an unused seed by its number: /unseed <number>",
     "skip": "Skip the next scheduled run only",
     "now": "Run now, without touching the daily schedule",
 }
