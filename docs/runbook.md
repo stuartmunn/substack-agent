@@ -12,7 +12,9 @@ Quick health check: `docker compose ps` should show `humblebrag` as `healthy`
 1. Get the code and be on `main`:
    `git clone https://github.com/stuartmunn/substack-agent.git && cd substack-agent`
 2. Put each secret in its own file under `secrets/` (git-ignored). No trailing
-   text, no quotes:
+   text, no quotes. Each file must be readable by the container's non-root
+   user (see [Refresh the Substack cookie](#refresh-the-substack-cookie) for
+   why and how):
    - `secrets/telegram_bot_token`: the token from BotFather
    - `secrets/anthropic_api_key`: the Anthropic API key
    - `secrets/substack_cookie`: see [Refresh the Substack cookie](#refresh-the-substack-cookie)
@@ -21,6 +23,18 @@ Quick health check: `docker compose ps` should show `humblebrag` as `healthy`
    `SUBSTACK_PUBLICATION_URL`. `RUN_TIME` (default `08:30`) and `TZ` (default
    `Europe/London`) are optional. Compose refuses to start if a required value
    is unset and names the missing one.
+
+   `SUBSTACK_PUBLICATION_URL` is the **publication address**:
+   `https://<subdomain>.substack.com`, or your custom domain (for example
+   `https://example.com`). It is **not** your profile URL
+   (`https://substack.com/@name`). With a profile URL the agent refuses to
+   start: the container exits with `Configuration error: SUBSTACK_PUBLICATION_URL
+   must be https://<subdomain>.substack.com or a custom domain ...` in
+   `docker compose logs humblebrag`. A well-formed address that Substack cannot
+   find (a typo, or a publication your account does not own) starts fine but
+   alerts `Substack says the publication is unavailable: SUBSTACK_PUBLICATION_URL
+   is wrong or unreachable ... or the cookie is logged out`. Check the URL
+   first, then the cookie.
 4. Deploy: `./scripts/deploy.sh`. It builds and starts the container, waits
    for it to be `healthy`, then runs the [smoke test](#smoke-test). (The
    script starts with `git pull --ff-only`, which does nothing on a fresh clone.)
@@ -92,8 +106,17 @@ hand the draft to Substack (it stays pending, nothing is lost).
    Cookies, `https://substack.com`.
 3. Copy the **value** of the `substack.sid` cookie. (Pasting the whole
    `name=value; name2=value2` string from a request header also works.)
-4. Write it to the secret file with no extra text, and keep it private:
-   `printf '%s' '<the value>' > secrets/substack_cookie && chmod 600 secrets/substack_cookie`
+4. Write it to the secret file with no extra text, and make it readable:
+   `printf '%s' '<the value>' > secrets/substack_cookie && chmod 644 secrets/substack_cookie`
+
+   Use `644`, not `600`. Compose mounts the file into the container with the
+   same owner and permissions it has on `andor`, and the agent runs as a
+   non-root user (uid `10001`), not as you. A file that only you can read
+   (`600`) is unreadable to that user, and the agent stops at startup with
+   `SUBSTACK_COOKIE_FILE points to a file that cannot be read
+   (PermissionError)`. The same applies to the other files in `secrets/`. The
+   trade-off is that any other account on `andor` can read the file, so keep
+   `andor` to trusted users.
 5. Restart so the new value is read: `docker compose up -d --force-recreate`
    (then `docker compose exec -T humblebrag python -m humblebrag.smoke` if you
    want proof the bot is back)
@@ -102,6 +125,18 @@ hand the draft to Substack (it stays pending, nothing is lost).
 
 If you suspect the cookie leaked, log out of all sessions in Substack
 (which invalidates it) before creating a new one.
+
+## The agent never publishes
+
+The agent only ever creates (and updates) Substack **drafts**. When you tap
+**Approve** in Telegram it puts the post into Substack as a draft and sends you
+the editor link. You read it there and press Publish yourself. Nothing is
+published, and nothing reaches Substack even as a draft, without your Approve.
+
+The agent used to try to publish too, but Substack's publish call answered
+`403` while draft creation worked. Why is still unknown; it is being looked
+into in [SA-42](https://stuartmunn.atlassian.net/browse/SA-42). Until that is
+settled, publishing stays a manual step in the editor.
 
 ## Edit `seed.md` by hand
 
@@ -165,3 +200,57 @@ ID and the editor link, e.g.
 
 If creating the draft itself failed, nothing exists on Substack: the local
 draft stays pending, and you can tap **Approve** again, **Redo** or **Bin**.
+
+## Restore from a backup
+
+Use this if `humblebrag.db` or `seed.md` is lost or damaged. The agent backs
+both up every day after 03:00 into the data volume, one folder per local day:
+`/data/backups/<date>/` (for example `/data/backups/2026-11-19/`), keeping the
+newest 14. Each folder holds `humblebrag.db` and, if `seed.md` existed that
+day, `seed.md`.
+
+Restoring puts the files back as they were at that backup. Anything made since
+is lost: drafts, seeds added with `/seed`, and seeds used or skipped.
+
+1. Stop the agent so nothing writes while you restore:
+   `docker compose stop humblebrag`
+2. List the available days and pick one:
+   `docker compose run --rm --no-deps --entrypoint ls humblebrag -1 /data/backups`
+3. Restore it (set `DAY` to the folder name). This keeps the current files as
+   `*.before-restore` in `/data` so you can undo it, clears any stale SQLite
+   journal files, then copies the backup in. It runs as the container user, so
+   the restored files have the right owner:
+
+       docker compose run --rm --no-deps -e DAY=2026-11-19 --entrypoint sh humblebrag -c '
+         set -e; cd /data
+         test -f "backups/$DAY/humblebrag.db"
+         [ ! -f humblebrag.db ] || cp humblebrag.db humblebrag.db.before-restore
+         [ ! -f seed.md ] || cp seed.md seed.md.before-restore
+         rm -f humblebrag.db-journal humblebrag.db-wal humblebrag.db-shm
+         cp "backups/$DAY/humblebrag.db" humblebrag.db
+         [ ! -f "backups/$DAY/seed.md" ] || cp "backups/$DAY/seed.md" seed.md
+         ls -l /data'
+
+   If that day's folder has no `seed.md`, the current `seed.md` is left as it
+   is. To restore only one of the two files, delete the other `cp` line.
+4. Start the agent: `docker compose up -d humblebrag`, then check
+   `docker compose ps` shows `healthy` and the logs have a clean startup.
+5. In Telegram, send `/seeds` and check the list is what you expect from that
+   day. Then check pending drafts:
+   - A draft that was pending at the backup but has since been approved or
+     binned shows as pending again. If you already approved it, find the
+     Substack draft first, because approving again may create a second one.
+   - `seed-reservations.json` is not part of the backup. If tapping **Approve**
+     on a restored draft alerts that no seed is reserved, **Bin** it instead.
+
+To undo a restore, stop the agent and copy the `*.before-restore` files back
+over `humblebrag.db` and `seed.md` the same way. The backups themselves are
+never changed by a restore.
+
+The volume's full name is the repo folder name plus `_humblebrag-data` (for
+example `substack-agent_humblebrag-data`; see `docker volume ls`). When you want
+to rehearse a restore, copy that volume to a new one and run the steps in a
+separate compose project (`docker compose -p <name> ...`) rather than on the
+live volume. (Compose warns that the copied volume "was not created by Docker
+Compose"; that is harmless.) Never start the agent itself in a rehearsal: it would poll
+Telegram with the live bot token.
