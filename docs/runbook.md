@@ -114,9 +114,12 @@ hand the draft to Substack (it stays pending, nothing is lost).
    non-root user (uid `10001`), not as you. A file that only you can read
    (`600`) is unreadable to that user, and the agent stops at startup with
    `SUBSTACK_COOKIE_FILE points to a file that cannot be read
-   (PermissionError)`. The same applies to the other files in `secrets/`. The
-   trade-off is that any other account on `andor` can read the file, so keep
-   `andor` to trusted users.
+   (PermissionError)`. The same applies to the other files in `secrets/`.
+
+   A `644` file is readable by every account on `andor`, so also lock the
+   folder: `chmod 700 secrets`. Other accounts then cannot reach the files at
+   all, while the container still reads them (Docker mounts them as root, so
+   the folder's permissions do not affect the container).
 5. Restart so the new value is read: `docker compose up -d --force-recreate`
    (then `docker compose exec -T humblebrag python -m humblebrag.smoke` if you
    want proof the bot is back)
