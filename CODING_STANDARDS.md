@@ -107,3 +107,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [SEC-18] Host blocklist checks normalise the host first (lower case, trailing dot stripped) so a DNS-equivalent spelling cannot slip past (from PR #33, 2026-11-19)
 - [PY-10] Validators that parse a URL touch every component they rely on (including `.port`) inside the `try`, so malformed input becomes the documented error at load time (from PR #33, 2026-11-19)
 - [MEM-01] In-memory per-key bookkeeping (sets and dicts of draft ids) is removed as soon as the durable store records the outcome, so a long-running process does not grow without bound (from PR #38, 2026-11-21)
+- [SEC-19] Code that fetches a user-supplied URL resolves the host and refuses any non-public address (loopback, private, link-local) before every request, including each redirect hop (from PR #41, 2026-11-21)

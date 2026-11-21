@@ -4,6 +4,7 @@ All pages are saved fixtures served by a fake ``get``; there is no live network.
 """
 
 import ast
+import socket
 import tomllib
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -84,6 +85,22 @@ class FakeGet:
 def _serve(name: str) -> FakeGet:
     """A fake network that serves one fixture page."""
     return FakeGet(FakeResponse(body=_page(name)))
+
+
+PUBLIC_ADDRESS = "93.184.216.34"
+
+
+def _answer(address: str) -> list[tuple[Any, ...]]:
+    """A getaddrinfo-style answer holding one address."""
+    return [(0, 0, 0, "", (address, 443))]
+
+
+@pytest.fixture(autouse=True)
+def public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No live DNS: every host resolves to a public address unless a test says not."""
+    monkeypatch.setattr(
+        fetcher_module.socket, "getaddrinfo", lambda *a, **k: _answer(PUBLIC_ADDRESS)
+    )
 
 
 @pytest.fixture
@@ -369,6 +386,66 @@ def test_a_redirect_to_a_custom_domain_with_markers_is_read() -> None:
         _redirect(CUSTOM_URL), FakeResponse(body=_page("custom_domain_post.html"))
     )
     assert fetch_target(POST_URL, get=get).ok
+
+
+# SSRF: hosts that resolve to private or internal addresses are never requested
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["127.0.0.1", "10.0.0.5", "192.168.1.20", "169.254.169.254", "::1", "fe80::1%eth0"],
+)
+def test_a_host_resolving_to_a_private_address_is_not_requested(
+    monkeypatch: pytest.MonkeyPatch, address: str
+) -> None:
+    """A custom domain pointed at an internal address gets no request."""
+    monkeypatch.setattr(
+        fetcher_module.socket, "getaddrinfo", lambda *a, **k: _answer(address)
+    )
+    get = FakeGet()
+    result = fetch_target(CUSTOM_URL, get=get)
+    assert result.status is FetchStatus.REJECTED
+    assert "private" in result.reason
+    assert get.calls == []
+
+
+def test_one_private_answer_among_public_ones_blocks_the_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every resolved address must be public, not just the first."""
+    answers = _answer(PUBLIC_ADDRESS) + _answer("10.0.0.5")
+    monkeypatch.setattr(fetcher_module.socket, "getaddrinfo", lambda *a, **k: answers)
+    assert fetch_target(CUSTOM_URL, get=FakeGet()).status is FetchStatus.REJECTED
+
+
+def test_a_redirect_to_a_private_host_is_not_followed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A public page cannot bounce the fetch onto an internal host."""
+
+    def resolve(host: str, *args: Any, **kwargs: Any) -> list[tuple[Any, ...]]:
+        return _answer("10.0.0.5" if host == "internal.example.org" else PUBLIC_ADDRESS)
+
+    monkeypatch.setattr(fetcher_module.socket, "getaddrinfo", resolve)
+    get = FakeGet(_redirect("https://internal.example.org/p/x"))
+    result = fetch_target(POST_URL, get=get)
+    assert result.status is FetchStatus.REJECTED
+    assert len(get.calls) == 1
+
+
+def test_a_host_that_does_not_resolve_is_a_couldnt_read_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A DNS failure does not raise and nothing is requested."""
+
+    def fail(*args: Any, **kwargs: Any) -> list[tuple[Any, ...]]:
+        raise socket.gaierror("no such host")
+
+    monkeypatch.setattr(fetcher_module.socket, "getaddrinfo", fail)
+    get = FakeGet()
+    result = fetch_target(POST_URL, get=get)
+    assert result.status is FetchStatus.COULDNT_READ
+    assert get.calls == []
 
 
 # AC8: clear "couldn't read" results, never an exception

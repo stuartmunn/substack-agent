@@ -8,6 +8,7 @@ import asyncio
 import ipaddress
 import logging
 import re
+import socket
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -32,6 +33,8 @@ SUBSTACK_CDN_MARKER = "substackcdn.com"
 SUBSTACK_PRELOADS_MARKER = 'id="preloads-json"'
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 HTML_CONTENT_TYPES = ("text/html", "application/xhtml+xml")
+HTTPS_PORT = 443
+PRIVATE_HOST_REASON = "That link points at a private or internal address."
 ALERT_EVENT = "Substack link fetch"
 NOT_SUBSTACK_REASON = "That is not a Substack page."
 COMMENTS_TITLE_PREFIX = "Comments - "
@@ -193,6 +196,21 @@ def _check_url(url: str) -> str:
     return host
 
 
+def _require_public_host(host: str) -> None:
+    """Refuse a host that does not resolve, or resolves to a non-public address."""
+    try:
+        infos = socket.getaddrinfo(host, HTTPS_PORT, type=socket.SOCK_STREAM)
+    except (socket.gaierror, UnicodeError):
+        raise _FetchError(
+            FetchStatus.COULDNT_READ, "That link's host could not be found."
+        ) from None
+    addresses = {info[4][0] for info in infos}
+    if not addresses or not all(
+        ipaddress.ip_address(address.split("%")[0]).is_global for address in addresses
+    ):
+        raise _FetchError(FetchStatus.REJECTED, PRIVATE_HOST_REASON)
+
+
 def classify_path(path: str) -> TargetType:
     """Work out what a Substack path points at, or raise if it is not supported."""
     if COMMENT_PATH.match(path):
@@ -231,6 +249,7 @@ def _fetch_html(url: str, timeout: float, get: Getter) -> tuple[str, str]:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise _FetchError(FetchStatus.COULDNT_READ, "The fetch timed out.")
+        _require_public_host(host)
         response = get(
             url,
             headers={"User-Agent": USER_AGENT, "Accept": ACCEPT},
