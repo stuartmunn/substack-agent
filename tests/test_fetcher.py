@@ -559,6 +559,45 @@ def test_a_hung_dns_lookup_runs_into_the_timeout(
     assert get.calls == []
 
 
+def test_stuck_lookups_are_capped_and_free_their_slot_when_they_finish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stalling resolver can hold only a few threads, and recovers afterwards."""
+    release = threading.Event()
+    slots_freed = threading.Semaphore(0)
+    calls: list[str] = []
+
+    def hang(host: str, *args: Any, **kwargs: Any) -> list[tuple[Any, ...]]:
+        calls.append(host)
+        release.wait(5)
+        return _answer(PUBLIC_ADDRESS)
+
+    real_release = fetcher_module._lookup_slots.release
+
+    def release_and_signal() -> None:
+        real_release()
+        slots_freed.release()
+
+    monkeypatch.setattr(fetcher_module._lookup_slots, "release", release_and_signal)
+
+    monkeypatch.setattr(fetcher_module.socket, "getaddrinfo", hang)
+    try:
+        for _ in range(fetcher_module.MAX_PENDING_LOOKUPS):
+            fetch_target(POST_URL, timeout=0.02, get=FakeGet())
+        before = len(calls)
+        result = fetch_target(POST_URL, timeout=0.02, get=FakeGet())
+        assert "stuck" in result.reason
+        assert len(calls) == before  # no new thread was started
+    finally:
+        release.set()
+    for _ in range(fetcher_module.MAX_PENDING_LOOKUPS):  # wait for the slots back
+        assert slots_freed.acquire(timeout=5)
+    monkeypatch.setattr(
+        fetcher_module.socket, "getaddrinfo", lambda *a, **k: _answer(PUBLIC_ADDRESS)
+    )
+    assert fetch_target(POST_URL, get=_serve("post.html")).ok
+
+
 # AC8: clear "couldn't read" results, never an exception
 
 

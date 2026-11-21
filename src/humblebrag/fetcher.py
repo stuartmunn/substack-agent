@@ -10,6 +10,7 @@ import ipaddress
 import logging
 import re
 import socket
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ SUBSTACK_PRELOADS_MARKER = 'id="preloads-json"'
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 HTML_CONTENT_TYPES = ("text/html", "application/xhtml+xml")
 HTTPS_PORT = 443
+MAX_PENDING_LOOKUPS = 4
 PRIVATE_HOST_REASON = "That link points at a private or internal address."
 ALERT_EVENT = "Substack link fetch"
 NOT_SUBSTACK_REASON = "That is not a Substack page."
@@ -198,17 +200,32 @@ def _check_url(url: str) -> str:
     return host
 
 
+_lookup_slots = threading.BoundedSemaphore(MAX_PENDING_LOOKUPS)
+
+
 def _lookup(host: str, timeout: float) -> list[tuple]:
-    """Resolve ``host`` without blocking the caller for longer than ``timeout``."""
+    """Resolve ``host``, never blocking the caller past ``timeout``.
+
+    A lookup that outlives its timeout keeps its slot until it really finishes,
+    so a stalling resolver can hold at most MAX_PENDING_LOOKUPS threads.
+    """
+    if not _lookup_slots.acquire(blocking=False):
+        raise _FetchError(FetchStatus.COULDNT_READ, "Too many lookups are stuck.")
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        return executor.submit(
+        future = executor.submit(
             socket.getaddrinfo, host, HTTPS_PORT, type=socket.SOCK_STREAM
-        ).result(timeout=timeout)
-    except concurrent.futures.TimeoutError:
-        raise _FetchError(FetchStatus.COULDNT_READ, "The fetch timed out.") from None
+        )
+    except BaseException:
+        _lookup_slots.release()
+        raise
     finally:
         executor.shutdown(wait=False)
+    future.add_done_callback(lambda _done: _lookup_slots.release())
+    try:
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        raise _FetchError(FetchStatus.COULDNT_READ, "The fetch timed out.") from None
 
 
 def _resolve_public_address(host: str, timeout: float) -> str:
