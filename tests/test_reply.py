@@ -565,3 +565,27 @@ async def test_two_replies_at_once_do_not_interfere(rig: Rig) -> None:
     await asyncio.gather(*(task for task in rig.tasks))
     rig.tasks.clear()
     assert sorted(rig.service._sessions) == [1, 2]
+
+
+async def test_a_session_with_a_redo_running_is_not_evicted(rig: Rig) -> None:
+    """Eviction skips a busy session, so its redo can finish."""
+    rig.service = ReplyService(rig._fetch, rig._generate, max_sessions=2)
+    await rig.send(f"/reply {POST_URL}")
+    await rig.service.on_button(rig.tap("rpr:1"), rig.context)  # redo of 1 pending
+    for _ in range(2):  # run the new replies' tasks only, not the pending redo
+        await rig.service.on_reply(rig.message(f"/reply {POST_URL}"), rig.context)
+        await rig.tasks.pop(1)
+    assert 1 in rig.service._sessions
+    assert 2 not in rig.service._sessions
+    await rig.drain()
+    assert _buttons(rig.bot.sent[-1]) == ["rpr:1", "rpb:1"]
+
+
+async def test_a_reply_binned_during_its_redo_says_so(rig: Rig) -> None:
+    """A redo that finishes after Bin tells the chat instead of vanishing."""
+    await rig.send(f"/reply {POST_URL}")
+    await rig.service.on_button(rig.tap("rpr:1"), rig.context)
+    await rig.service.on_button(rig.tap("rpb:1"), rig.context)
+    await rig.drain()
+    assert rig.bot.texts[-1] == GONE_TEXT
+    assert rig.bot.texts.count("Reply number 2") == 0

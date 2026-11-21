@@ -271,7 +271,10 @@ class ReplyService:
             checked = await self._generate_or_report(
                 bot, chat_id, session.target, session.steer
             )
-            if checked is None or session_id not in self._sessions:
+            if checked is None:
+                return
+            if session_id not in self._sessions:
+                await bot.send_message(chat_id=chat_id, text=GONE_TEXT)
                 return
             session.redo_count += 1
             await self._remove_buttons(bot, chat_id, old_message)
@@ -305,12 +308,16 @@ class ReplyService:
             await self._remove_buttons(bot, chat_id, message)
 
     def _remember(self, session: _Session) -> int:
-        """Store a session, forgetting the oldest beyond the cap; return its id."""
+        """Store a session, forgetting the oldest idle ones beyond the cap; return its id.
+
+        A session whose redo is running is never forgotten mid-way.
+        """
         session_id = self._next_id
         self._next_id += 1
         self._sessions[session_id] = session
-        while len(self._sessions) > self._max_sessions:
-            self._sessions.popitem(last=False)
+        idle = [key for key, value in self._sessions.items() if not value.busy]
+        for key in idle[: max(len(self._sessions) - self._max_sessions, 0)]:
+            del self._sessions[key]
         return session_id
 
     @staticmethod
