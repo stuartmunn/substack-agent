@@ -243,8 +243,12 @@ class ApproveService:
     ) -> None:
         """Send the Gemini prompt alone, and remember it was sent."""
         text = await asyncio.to_thread(build_image_prompt, image_scene)
-        await self._say(context, chat_id, text)
+        sent = await context.bot.send_message(chat_id=chat_id, text=text)
         self._image_prompt_sent.add(draft_id)
+        # So a reply to this message can be matched to the draft, even after a restart.
+        await asyncio.to_thread(
+            self._store.set_image_prompt_message_id, draft_id, sent.message_id
+        )
 
     @staticmethod
     async def _step(problems: list[str], step: str, work: Awaitable[object]) -> bool:

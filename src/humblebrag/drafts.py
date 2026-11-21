@@ -33,6 +33,7 @@ REBUILT_TABLE = "drafts_new"
 NEW_COLUMN = "substack_draft_id"
 TEASER_COLUMN = "note_teaser"
 SCENE_COLUMN = "image_scene"
+PROMPT_MESSAGE_COLUMN = "image_prompt_message_id"
 _TABLE_BODY = f"""(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     seed TEXT NOT NULL,
@@ -49,7 +50,8 @@ _TABLE_BODY = f"""(
     substack_url TEXT,
     {NEW_COLUMN} TEXT,
     {TEASER_COLUMN} TEXT NOT NULL DEFAULT '',
-    {SCENE_COLUMN} TEXT NOT NULL DEFAULT ''
+    {SCENE_COLUMN} TEXT NOT NULL DEFAULT '',
+    {PROMPT_MESSAGE_COLUMN} TEXT NOT NULL DEFAULT ''
 )"""
 SCHEMA = f"CREATE TABLE {DRAFTS_TABLE} {_TABLE_BODY}"
 _OLD_COLUMN_LIST = (
@@ -79,12 +81,12 @@ _ADDED_COLUMNS = tuple(
         f"add the {column} column",
         f"ALTER TABLE {DRAFTS_TABLE} ADD COLUMN {column} TEXT NOT NULL DEFAULT ''",
     )
-    for column in (TEASER_COLUMN, SCENE_COLUMN)
+    for column in (TEASER_COLUMN, SCENE_COLUMN, PROMPT_MESSAGE_COLUMN)
 )
 _COLUMNS = (
     "id, seed, title, subtitle, body, steer_history, redo_count, status, "
     "created_at, resolved_at, substack_url, substack_draft_id, note_teaser, "
-    "image_scene"
+    "image_scene, image_prompt_message_id"
 )
 
 
@@ -140,6 +142,7 @@ class Draft:
     substack_draft_id: str | None = None
     note_teaser: str = ""
     image_scene: str = ""
+    image_prompt_message_id: str = ""
 
 
 def _to_draft(row: tuple) -> Draft:
@@ -160,6 +163,7 @@ def _to_draft(row: tuple) -> Draft:
         substack_draft_id=row[11],
         note_teaser=row[12],
         image_scene=row[13],
+        image_prompt_message_id=row[14],
     )
 
 
@@ -283,6 +287,24 @@ class DraftStore:
             current = self.get(draft_id)
             raise DraftStateError(f"Draft {draft_id} is already {current.status}")
         return self.get(draft_id)
+
+    def set_image_prompt_message_id(self, draft_id: int, message_id: int) -> None:
+        """Remember which Telegram message holds the draft's image prompt, so a
+        reply to it can be matched to the draft. Raises DraftNotFoundError."""
+        cursor = self._execute(
+            f"UPDATE drafts SET {PROMPT_MESSAGE_COLUMN} = ? WHERE id = ?",
+            (str(message_id), draft_id),
+        )
+        if cursor.rowcount == 0:
+            raise DraftNotFoundError(f"Draft {draft_id} does not exist")
+
+    def find_by_image_prompt_message(self, message_id: int) -> Draft | None:
+        """The draft whose image prompt is Telegram message ``message_id``."""
+        rows = self._query(
+            f"SELECT {_COLUMNS} FROM drafts WHERE {PROMPT_MESSAGE_COLUMN} = ?",
+            (str(message_id),),
+        )
+        return _to_draft(rows[0]) if rows else None
 
     def apply_redo(
         self,

@@ -1,12 +1,14 @@
 """The only module that talks to python-substack (an unofficial API).
 
 SA-31 covers the session (cookie auth, ``check_session()``). SA-41 adds
-``create_draft()`` and ``update_draft()``. The agent never calls Substack's
+``create_draft()`` and ``update_draft()``; SA-50 adds ``add_header_image()``.
+The agent never calls Substack's
 publish endpoint: it creates and updates drafts only, and Stuart publishes in
 the Substack editor. No Substack Notes are created either.
 """
 
 import asyncio
+import json
 import logging
 import re
 import threading
@@ -14,7 +16,7 @@ from collections.abc import Callable
 from typing import Any
 
 import requests
-from substack import Api
+from substack import Api, nodes
 from substack.exceptions import SubstackAPIException, SubstackRequestException
 
 from humblebrag.alerts import alert, describe_error
@@ -31,6 +33,8 @@ RUNBOOK_URL = (
     "#refresh-the-substack-cookie"
 )
 EDITOR_PATH = "/publish/post/{draft_id}"
+NOT_FOUND_STATUS_CODE = 404
+IMAGE_BLOCK_TYPE = "captionedImage"
 SESSION_ALERT_EVENT = "substack session"
 CHECK_ALERT_EVENT = "substack"
 # Raised by python-substack when the cookie logs in as nobody or the wrong user.
@@ -58,6 +62,10 @@ class SubstackError(Exception):
 
 class DraftError(SubstackError):
     """Creating or updating a Substack draft failed; nothing was published."""
+
+
+class DraftNotEditableError(DraftError):
+    """The Substack draft is gone, scheduled or published, so it was not changed."""
 
 
 class PublicationUnavailableError(SubstackError):
@@ -221,6 +229,74 @@ class SubstackPublisher:
             self._update_blocking, draft_id, title, subtitle, body_markdown
         )
 
+    async def add_header_image(self, draft_id: str, image_path: str) -> None:
+        """Upload the image and make it the first block of the draft's body.
+
+        An existing header image (a first block that is an image) is replaced,
+        so there is only ever one. Nothing else in the draft changes. Re-checks
+        the session first. Raises ``DraftNotEditableError`` if the draft is gone,
+        scheduled or published, and ``DraftError`` on any other failure. Never
+        publishes.
+        """
+        await self.ensure_session()
+        await asyncio.to_thread(self._add_image_blocking, draft_id, image_path)
+
+    def _add_image_blocking(self, draft_id: str, image_path: str) -> None:
+        """Read the draft, upload the image, write back only the new body."""
+        with self._draft_lock:
+            try:
+                draft = self.api.get_draft(draft_id)
+            except SubstackAPIException as error:
+                if error.status_code == NOT_FOUND_STATUS_CODE:
+                    raise DraftNotEditableError(
+                        "The Substack draft no longer exists"
+                    ) from None
+                raise self._draft_failure("reading", error) from None
+            except Exception as error:  # noqa: BLE001  # ERR-18: any library error
+                raise self._draft_failure("reading", error) from None
+            if self._is_live(draft):
+                raise DraftNotEditableError(
+                    "The Substack draft is scheduled or published"
+                )
+            try:
+                body = self._parse_body(draft)
+                url = self._upload(image_path)
+                new_body = with_header_image(body, url)
+                self.api.put_draft(draft_id, draft_body=json.dumps(new_body))
+            except Exception as error:  # noqa: BLE001  # ERR-18: any library error
+                raise self._draft_failure("adding the image to", error) from None
+
+    @staticmethod
+    def _is_live(draft: Any) -> bool:
+        """True if Substack says the post is published or has a post date.
+
+        A draft has neither; a scheduled or published post has one of them.
+        """
+        return isinstance(draft, dict) and bool(
+            draft.get("is_published") or draft.get("post_date")
+        )
+
+    @staticmethod
+    def _parse_body(draft: Any) -> dict[str, Any]:
+        """The draft's body as a document dict; ValueError if it is not one."""
+        body = draft.get("draft_body") if isinstance(draft, dict) else None
+        if isinstance(body, str):
+            try:
+                body = json.loads(body)
+            except json.JSONDecodeError:
+                raise ValueError("draft_body is not valid JSON") from None
+        if not isinstance(body, dict) or not isinstance(body.get("content"), list):
+            raise TypeError("draft_body is not a document")
+        return body
+
+    def _upload(self, image_path: str) -> str:
+        """Upload the image file to Substack and return its URL."""
+        reply = self.api.get_image(image_path)
+        url = reply.get("url") if isinstance(reply, dict) else None
+        if not isinstance(url, str) or not url.startswith(("https://", "http://")):
+            raise ValueError("the upload gave no image URL")
+        return url
+
     def _create_blocking(self, title: str, subtitle: str, body_markdown: str) -> str:
         """Markdown -> draft; returns the draft ID. Blocking."""
         with self._draft_lock:  # two draft calls never overlap
@@ -278,3 +354,18 @@ class SubstackPublisher:
             f"Substack draft {action} failed ({type(error).__name__}). "
             "Nothing was published."
         )
+
+
+def with_header_image(body: dict[str, Any], url: str) -> dict[str, Any]:
+    """A copy of ``body`` whose first block is the image at ``url``.
+
+    If the first block is already an image it is replaced; otherwise the image
+    is inserted before everything else. The other blocks are kept as they were.
+    """
+    blocks = list(body["content"])
+    image = nodes.captioned_image(url)
+    if blocks and blocks[0].get("type") == IMAGE_BLOCK_TYPE:
+        blocks[0] = image
+    else:
+        blocks.insert(0, image)
+    return {**body, "content": blocks}

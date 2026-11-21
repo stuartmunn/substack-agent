@@ -74,11 +74,12 @@ class FakeBot:
         self.edit_error: Exception | None = None
         self.send_error: Exception | None = None
 
-    async def send_message(self, **kwargs: Any) -> None:
-        """Record a sent message's text, or raise the configured error."""
+    async def send_message(self, **kwargs: Any) -> SimpleNamespace:
+        """Record a sent message's text and give it an id, or raise the error."""
         if self.send_error is not None:
             raise self.send_error
         self.sent.append(kwargs["text"])
+        return SimpleNamespace(message_id=1000 + len(self.sent))
 
     async def edit_message_reply_markup(self, **kwargs: Any) -> None:
         """Record a button removal, or raise the configured error."""
@@ -730,6 +731,8 @@ async def test_the_image_prompt_follows_the_teaser_alone(hp: Harness) -> None:
     """SA-49 AC7/AC11: link, teaser, then the full prompt with the reply line."""
     await hp.tap()
     assert hp.bot.sent == [HANDED_OVER_TEXT.format(url=EDITOR), TEASER, PROMPT]
+    prompt_id = 1000 + 3
+    assert hp.store.find_by_image_prompt_message(prompt_id).id == hp.draft.id  # SA-50
     assert SCENE in PROMPT
     assert PROMPT.endswith("Reply to this message with the image.")
 
@@ -839,3 +842,16 @@ async def test_the_sent_prompt_bookkeeping_is_kept_while_pending(
     _break(monkeypatch, hp.store, "mark_handed_over")
     await hp.tap()
     assert hp.service._image_prompt_sent == {hp.draft.id}
+
+
+async def test_a_failure_to_save_the_prompt_message_id_alerts(
+    hp: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-50: without the id a reply cannot be matched, so Stuart is alerted;
+    the approval stands and the prompt is not sent again."""
+    _break(monkeypatch, hp.store, "set_image_prompt_message_id")
+    await hp.tap()
+    assert hp.bot.sent.count(PROMPT) == 1
+    assert hp.stored().status == STATUS_HANDED_OVER
+    [alert_text] = alerts
+    assert "send image prompt" in alert_text
