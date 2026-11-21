@@ -589,3 +589,18 @@ async def test_a_reply_binned_during_its_redo_says_so(rig: Rig) -> None:
     await rig.drain()
     assert rig.bot.texts[-1] == GONE_TEXT
     assert rig.bot.texts.count("Reply number 2") == 0
+
+
+async def test_the_newest_session_is_never_evicted_even_if_others_are_busy(
+    rig: Rig,
+) -> None:
+    """A fresh reply keeps working buttons when every older session is mid-redo."""
+    rig.service = ReplyService(rig._fetch, rig._generate, max_sessions=1)
+    await rig.send(f"/reply {POST_URL}")
+    await rig.service.on_button(rig.tap("rpr:1"), rig.context)  # session 1 is busy
+    await rig.service.on_reply(rig.message(f"/reply {POST_URL}"), rig.context)
+    await rig.tasks.pop(1)
+    assert sorted(rig.service._sessions) == [1, 2]
+    await rig.drain()
+    await rig.press("rpb:2")
+    assert GONE_TEXT not in rig.bot.texts

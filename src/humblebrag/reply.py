@@ -310,12 +310,16 @@ class ReplyService:
     def _remember(self, session: _Session) -> int:
         """Store a session, forgetting the oldest idle ones beyond the cap; return its id.
 
-        A session whose redo is running is never forgotten mid-way.
+        A session whose redo is running, and the one just stored, are never forgotten.
         """
         session_id = self._next_id
         self._next_id += 1
         self._sessions[session_id] = session
-        idle = [key for key, value in self._sessions.items() if not value.busy]
+        idle = [
+            key
+            for key, value in self._sessions.items()
+            if not value.busy and key != session_id
+        ]
         for key in idle[: max(len(self._sessions) - self._max_sessions, 0)]:
             del self._sessions[key]
         return session_id
