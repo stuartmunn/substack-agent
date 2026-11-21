@@ -51,8 +51,13 @@ GUARD_LINE = "🛡️ Guard passed: Clearly satire."
 NOW = datetime(2026, 11, 18, 8, 30, tzinfo=UTC)
 
 
-def _draft(body: str = "A short body.", draft_id: int = 7, redo: int = 2) -> Draft:
-    """A pending draft with the given body."""
+def _draft(
+    body: str = "A short body.",
+    draft_id: int = 7,
+    redo: int = 2,
+    teaser: str = "",
+) -> Draft:
+    """A pending draft with the given body and Note teaser."""
     return Draft(
         id=draft_id,
         seed="Spilled coffee",
@@ -65,6 +70,7 @@ def _draft(body: str = "A short body.", draft_id: int = 7, redo: int = 2) -> Dra
         created_at=NOW,
         resolved_at=None,
         substack_url=None,
+        note_teaser=teaser,
     )
 
 
@@ -88,6 +94,29 @@ def test_short_preview_is_one_message_with_everything() -> None:
         GUARD_LINE,
     ):
         assert expected in message
+
+
+def test_the_teaser_is_shown_after_the_body_under_its_label() -> None:
+    """SA-48 AC1: label, then the teaser, after the body and before the footer."""
+    [message] = format_preview(_draft(teaser="Humbled by coffee."), GUARD_LINE)
+    assert "A short body.\n\nNote teaser:\nHumbled by coffee." in message
+    assert message.index("Humbled by coffee.") < message.index("Seed: Spilled coffee")
+
+
+def test_a_draft_without_a_teaser_has_no_teaser_label() -> None:
+    """SA-48 AC6: an older draft's preview is unchanged."""
+    [message] = format_preview(_draft(), GUARD_LINE)
+    assert "Note teaser" not in message
+
+
+def test_a_long_preview_with_a_teaser_is_split_within_the_limit_and_keeps_it() -> None:
+    """SA-48 AC1: splitting still holds, and the teaser text is not lost."""
+    teaser = "Humbled by coffee. Truly."
+    chunks = format_preview(_draft(_long_body(), teaser=teaser), GUARD_LINE)
+    assert len(chunks) > 1
+    assert all(telegram_length(chunk) <= TELEGRAM_MESSAGE_LIMIT for chunk in chunks)
+    assert teaser in "\n".join(chunks)
+    assert "Note teaser:" in "\n".join(chunks)
 
 
 def test_missing_guard_result_is_said_not_hidden() -> None:
