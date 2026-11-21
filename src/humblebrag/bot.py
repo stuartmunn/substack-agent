@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import re
 from collections.abc import Awaitable, Callable
 
 from telegram import Update
@@ -20,6 +21,7 @@ from humblebrag.alerts import alert, configure_alerts, describe_error, telegram_
 from humblebrag.buttons import STORE_KEY, handle_button
 from humblebrag.config import Config
 from humblebrag.drafts import DraftStore
+from humblebrag.reply import REPLY_CALLBACK_PATTERN
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +45,12 @@ COMMANDS: dict[str, str] = {
     "unseed": "Skip an unused seed by its number: /unseed <number>",
     "skip": "Skip the next scheduled run only",
     "now": "Run now, without touching the daily schedule",
+    "reply": "Reply in character to a Substack link: /reply <link> [| steer]",
 }
 HELP_COMMANDS = ["start", "help"]
 ALLOWED_CHAT_KEY = "allowed_chat_id"
+# Draft buttons take every callback except the reply buttons' own.
+NOT_REPLY_CALLBACK_PATTERN = re.compile(rf"(?!{REPLY_CALLBACK_PATTERN[1:]})")
 
 
 def help_text() -> str:
@@ -105,7 +110,9 @@ def build_application(config: Config, store: DraftStore | None = None) -> Applic
 def install_buttons(application: Application, store: DraftStore) -> None:
     """Route the Approve / Redo / Bin buttons using ``store``."""
     application.bot_data[STORE_KEY] = store
-    application.add_handler(CallbackQueryHandler(handle_button))
+    application.add_handler(
+        CallbackQueryHandler(handle_button, pattern=NOT_REPLY_CALLBACK_PATTERN)
+    )
 
 
 async def _run_startup(on_started: Callable[[], Awaitable[object]]) -> None:

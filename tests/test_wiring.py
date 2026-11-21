@@ -178,3 +178,43 @@ async def test_a_failing_setup_stops_the_bot(monkeypatch: pytest.MonkeyPatch) ->
     with pytest.raises(RuntimeError, match="persona missing"):
         await bot.run_bot(load_config(ENV), setup=setup)
     app.updater.start_polling.assert_not_called()
+
+
+async def test_the_reply_command_is_built_on_the_guarded_generator(
+    tmp_path: Path,
+) -> None:
+    """SA-53 AC9: /reply is wired to the guard's reply check, with no bypass."""
+    from humblebrag import wiring
+    from humblebrag.fetcher import TargetType
+    from humblebrag.reply import ReplyService
+    from humblebrag.reply_generator import ReplyTarget
+
+    config = load_config(ENV)
+    application = build_application(config)
+    seen: dict[str, object] = {}
+
+    async def fake_checked(generate, reply_text, guard, steer):  # type: ignore[no-untyped-def]
+        seen["steer"] = steer
+        seen["reply"] = reply_text(await generate(steer))
+        return seen["reply"], "RESULT"
+
+    async def fake_generate(self, target, steer):  # type: ignore[no-untyped-def]
+        return "A reply."
+
+    original = wiring.generate_checked_reply
+    wiring.generate_checked_reply = fake_checked
+    wiring.ReplyGenerator.generate = fake_generate  # type: ignore[method-assign]
+    try:
+        Runtime(config, data_dir=tmp_path).setup(application)
+        handlers = [h for group in application.handlers.values() for h in group]
+        service = next(
+            h.callback.__self__
+            for h in handlers
+            if isinstance(h, CommandHandler) and "reply" in h.commands
+        )
+        assert isinstance(service, ReplyService)
+        checked = await service._generate(ReplyTarget(TargetType.NOTE, "x"), "smug")
+    finally:
+        wiring.generate_checked_reply = original
+    assert seen == {"steer": "smug", "reply": "A reply."}
+    assert checked.text == "A reply."
