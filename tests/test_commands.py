@@ -1,4 +1,4 @@
-"""Tests for /seed, /seeds, /unseed, /skip and /now (SA-36 and SA-45)."""
+"""Tests for /seed, /seedtop, /seeds, /unseed, /skip and /now (SA-36, SA-45, SA-46)."""
 
 import asyncio
 import fcntl
@@ -21,6 +21,7 @@ from humblebrag.commands import (
     SEED_USAGE,
     SEEDS_EMPTY,
     SEEDS_SHOWN,
+    SEEDTOP_USAGE,
     UNSEED_USAGE,
     CommandService,
     RunCoordinator,
@@ -380,14 +381,17 @@ async def test_a_failed_failure_reply_is_logged_not_raised(
     assert "Could not tell the chat" in caplog.text
 
 
-def test_install_registers_the_five_commands() -> None:
-    """All five commands are routed to the service."""
+def test_install_registers_the_six_commands() -> None:
+    """All six commands are routed to the service."""
     handlers: list[Any] = []
     application = SimpleNamespace(add_handler=handlers.append)
-    service = SimpleNamespace(on_seed=1, on_seeds=2, on_unseed=3, on_skip=4, on_now=5)
+    service = SimpleNamespace(
+        on_seed=1, on_seedtop=2, on_seeds=3, on_unseed=4, on_skip=5, on_now=6
+    )
     install_commands(application, service)  # type: ignore[arg-type]
     assert [min(h.commands) for h in handlers] == [
         "seed",
+        "seedtop",
         "seeds",
         "unseed",
         "skip",
@@ -534,5 +538,104 @@ async def test_unseed_waits_for_the_lock_in_a_worker_thread(
 
     monkeypatch.setattr(rig.queue, "skip_seed", spy)
     await rig.say("on_unseed", "1")
+    assert threads
+    assert threads[0] != threading.get_ident()
+
+
+# SA-46: /seedtop
+
+
+async def test_seedtop_puts_the_seed_first_and_confirms(rig: Rig) -> None:
+    """SA-46 AC1/AC4/AC11: it lands above the first unused seed, the reply gives
+    position 1 and the count, and /seeds then lists it as number 1."""
+    await rig.say("on_seedtop", "Timely", "idea")
+    assert rig.replies == ["Added at position 1 (3 unused): Timely idea"]
+    assert rig.seed_path.read_text() == (
+        "- [ ] Timely idea\n"
+        "- [ ] First seed\n- [x] Old seed (used 2026-11-01)\n- [ ] Second seed\n"
+    )
+    await rig.say("on_seeds")
+    assert "1. Timely idea" in rig.replies[1]
+
+
+@pytest.mark.parametrize("args", [[], [""], ["   "]])
+async def test_seedtop_with_no_text_shows_the_usage(rig: Rig, args: list[str]) -> None:
+    """SA-46 AC10: no text at all replies with the usage and changes nothing."""
+    await rig.say("on_seedtop", *args)
+    assert rig.replies == [SEEDTOP_USAGE]
+    assert SEEDTOP_USAGE == "Say what the seed is about: /seedtop <text>"
+    assert rig.seed_path.read_text() == SEEDS
+
+
+async def test_seedtop_rejects_bad_text_like_seed_does(rig: Rig) -> None:
+    """SA-46 AC10: over-long and control-character text get /seed's reasons."""
+    await rig.say("on_seedtop", "x" * (MAX_SEED_LENGTH + 1))
+    await rig.say("on_seedtop", "bad\x07text")
+    assert rig.replies == [
+        f"Not added. The seed is over {MAX_SEED_LENGTH} characters.",
+        "Not added. The seed has control characters.",
+    ]
+    assert rig.seed_path.read_text() == SEEDS
+
+
+async def test_seedtop_of_an_unused_duplicate_says_it_moved(rig: Rig) -> None:
+    """SA-46 AC7: the old line is skipped, the new one is on top, the reply says moved."""
+    await rig.say("on_seedtop", "SECOND", "seed")
+    assert rig.replies == ["Moved to position 1 (2 unused): SECOND seed"]
+    assert rig.queue.unused_texts() == ["SECOND seed", "First seed"]
+    assert "- [x] Second seed (skipped 2026-11-18)" in rig.seed_path.read_text()
+
+
+async def test_seedtop_of_a_reserved_seed_is_refused_without_an_alert(
+    rig: Rig, alerts: list[str]
+) -> None:
+    """SA-46 AC8: the exact refusal text, nothing changes, no alert."""
+    rig.queue.pick("draft-1")
+    await rig.say("on_seedtop", "first seed")
+    reply = (
+        "Not added. That seed is reserved by a pending draft. "
+        "Bin or Approve that draft first, then try again."
+    )
+    assert rig.replies == [reply]
+    assert rig.seed_path.read_text() == SEEDS
+    assert alerts == []
+
+
+async def test_seedtop_does_not_start_a_run(rig: Rig) -> None:
+    """SA-46 AC13: /seedtop only edits the queue; /now stays separate."""
+    await rig.say("on_seedtop", "Timely")
+    await rig.settle()
+    assert rig.run.calls == 0
+
+
+async def test_seedtop_failure_alerts_and_tells_the_chat(
+    rig: Rig, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-46 AC12/TST-04: a broken queue is an alert and a reply, not a crash."""
+
+    def broken(_text: str) -> None:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(rig.queue, "add_seed_top", broken)
+    await rig.say("on_seedtop", "Timely")
+    assert rig.replies == [FAILED]
+    assert len(alerts) == 1
+    assert "/seedtop" in alerts[0]
+    assert "disk full" in alerts[0]
+
+
+async def test_seedtop_runs_the_queue_call_in_a_worker_thread(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ERR-13: the blocking queue call runs off the event loop."""
+    threads: list[int] = []
+    real = rig.queue.add_seed_top
+
+    def spy(text: str) -> Any:
+        threads.append(threading.get_ident())
+        return real(text)
+
+    monkeypatch.setattr(rig.queue, "add_seed_top", spy)
+    await rig.say("on_seedtop", "Timely")
     assert threads
     assert threads[0] != threading.get_ident()

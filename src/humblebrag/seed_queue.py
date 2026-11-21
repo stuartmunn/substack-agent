@@ -27,6 +27,10 @@ LOCK_SUFFIX = ".lock"
 LOCK_TIMEOUT_SECONDS = 5.0
 LOCK_POLL_SECONDS = 0.05
 MAX_SEED_LENGTH = 300
+RESERVED_MESSAGE = (
+    "That seed is reserved by a pending draft. "
+    "Bin or Approve that draft first, then try again."
+)
 
 
 class AddedSeed(NamedTuple):
@@ -34,6 +38,15 @@ class AddedSeed(NamedTuple):
 
     text: str
     unused_count: int
+
+
+class AddedTopSeed(NamedTuple):
+    """A seed put at position 1: its text, the unused count, and whether an
+    existing unused copy was skipped to make way for it."""
+
+    text: str
+    unused_count: int
+    moved: bool
 
 
 class InvalidSeedError(ValueError):
@@ -66,6 +79,18 @@ class ReservationBusyError(ReservationError):
 
 class ReservationStateError(ReservationError):
     """The reservations file exists but cannot be understood."""
+
+
+def _clean_seed_text(text: str) -> str:
+    """Tidy and validate typed seed text, or raise InvalidSeedError."""
+    cleaned = " ".join(text.split())
+    if not cleaned:
+        raise InvalidSeedError("The seed is empty.")
+    if len(cleaned) > MAX_SEED_LENGTH:
+        raise InvalidSeedError(f"The seed is over {MAX_SEED_LENGTH} characters.")
+    if not cleaned.isprintable():
+        raise InvalidSeedError("The seed has control characters.")
+    return cleaned
 
 
 def _number_range_message(unused_count: int) -> str:
@@ -151,13 +176,7 @@ class SeedQueue:
         Raises InvalidSeedError if it is empty, too long, has control
         characters, or is already an unused seed (compared case-insensitively).
         """
-        cleaned = " ".join(text.split())
-        if not cleaned:
-            raise InvalidSeedError("The seed is empty.")
-        if len(cleaned) > MAX_SEED_LENGTH:
-            raise InvalidSeedError(f"The seed is over {MAX_SEED_LENGTH} characters.")
-        if not cleaned.isprintable():
-            raise InvalidSeedError("The seed has control characters.")
+        cleaned = _clean_seed_text(text)
         with self._locked():
             seed_file = SeedFile.load(self._seed_path)
             if seed_key(cleaned) in {seed_key(s.text) for s in seed_file.unused}:
@@ -165,6 +184,31 @@ class SeedQueue:
             seed_file.append_seed(cleaned)
             seed_file.save()
             return AddedSeed(cleaned, len(seed_file.unused))
+
+    def add_seed_top(self, text: str) -> AddedTopSeed:
+        """Put ``text`` at position 1: directly above the first unused seed.
+
+        An unused copy of the text (compared case-insensitively) is skipped, as
+        ``/unseed`` would, and the new line replaces it at the top. The
+        duplicate check, the skip and the insert happen under one lock and are
+        written once. A used or skipped copy is ignored, as in ``add_seed``.
+
+        Raises InvalidSeedError as ``add_seed`` does for bad text, and
+        SeedInUseError if a pending draft has reserved a copy.
+        """
+        cleaned = _clean_seed_text(text)
+        key = seed_key(cleaned)
+        with self._locked():
+            seed_file = SeedFile.load(self._seed_path)
+            duplicates = [s for s in seed_file.unused if seed_key(s.text) == key]
+            reserved = {seed_key(t) for t in self._load_reservations().values()}
+            if duplicates and key in reserved:
+                raise SeedInUseError(RESERVED_MESSAGE)
+            for duplicate in duplicates:
+                seed_file.mark_skipped(duplicate, self._today())
+            seed_file.insert_seed_first(cleaned)
+            seed_file.save()
+            return AddedTopSeed(cleaned, len(seed_file.unused), bool(duplicates))
 
     def skip_seed(self, number: int) -> str:
         """Mark the unused seed at ``number`` (1-based, as ``/seeds`` lists them)
@@ -184,10 +228,7 @@ class SeedQueue:
                 raise InvalidSeedNumberError(_number_range_message(len(unused)))
             target = unused[number - 1]
             if target.text in self._load_reservations().values():
-                raise SeedInUseError(
-                    "That seed is reserved by a pending draft. "
-                    "Bin or Approve that draft first, then try again."
-                )
+                raise SeedInUseError(RESERVED_MESSAGE)
             seed_file.mark_skipped(target, self._today())
             seed_file.save()
             return target.text

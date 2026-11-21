@@ -207,12 +207,29 @@ class SeedFile:
         carriage_return = "\r" if line.endswith("\r") else ""
         self._lines[seed.line_index] = new_line + carriage_return
 
-    def append_seed(self, text: str, generated: bool = False) -> None:
-        """Add an unused seed at the end, leaving every other line untouched."""
+    def _new_line(self, text: str, generated: bool) -> str:
+        """Build an unused seed line, matching the file's line endings."""
         if "\n" in text or "\r" in text or not text.strip():
             raise ValueError("Seed text must be one non-empty line")
         carriage_return = "\r" if any(x.endswith("\r") for x in self._lines) else ""
-        line = format_seed_line(text.strip(), None, generated) + carriage_return
+        return format_seed_line(text.strip(), None, generated) + carriage_return
+
+    def insert_seed_first(self, text: str, generated: bool = False) -> None:
+        """Add an unused seed directly above the first unused seed line.
+
+        "First" means the first unused seed, wherever it sits in a hand-edited
+        file, not line 1. With no unused seed the line is appended. Every other
+        line is untouched.
+        """
+        unused = self.unused
+        if not unused:
+            self.append_seed(text, generated)
+            return
+        self._lines.insert(unused[0].line_index, self._new_line(text, generated))
+
+    def append_seed(self, text: str, generated: bool = False) -> None:
+        """Add an unused seed at the end, leaving every other line untouched."""
+        line = self._new_line(text, generated)
         if self._lines[-1] == "":
             self._lines.insert(len(self._lines) - 1, line)
         else:

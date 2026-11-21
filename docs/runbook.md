@@ -149,6 +149,14 @@ using its number from `/seeds`; the bot replies with the seed's text, so you
 can spot a wrong pick (add it again with `/seed`). It refuses a seed that a
 pending draft has reserved: Bin or Approve that draft first.
 
+To make a timely idea the next one used, send `/seedtop <text>`. It puts the
+seed at position 1 (above the first unused seed, wherever that is in the file)
+and replies with the unused count. If the same text is already an unused seed,
+that line is marked skipped and the seed moves to the top. If a pending draft
+has reserved that seed, the bot refuses: Bin or Approve that draft first. A
+draft that already holds a different seed keeps it; the new seed is used on the
+run after. `/seedtop` does not start a run; send `/now` for that.
+
 To edit the file itself, copy it out of the container, edit it, and copy it back:
 
     docker compose cp humblebrag:/data/seed.md ./seed.md

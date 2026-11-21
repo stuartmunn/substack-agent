@@ -7,9 +7,12 @@ from pathlib import Path
 
 import pytest
 
+from humblebrag import seed as seed_module
 from humblebrag import seed_queue
 from humblebrag.seed_queue import (
+    MAX_SEED_LENGTH,
     RESERVATIONS_FILENAME,
+    AddedTopSeed,
     InvalidSeedError,
     InvalidSeedNumberError,
     ReservationBusyError,
@@ -476,3 +479,175 @@ def test_invalid_seed_error_is_still_what_add_seed_raises(seed_path: Path) -> No
     """Skipping does not change /seed's own refusals."""
     with pytest.raises(InvalidSeedError):
         _queue(seed_path).add_seed("First unused")
+
+
+# SA-46: add_seed_top
+
+
+def test_add_seed_top_inserts_above_the_first_unused_seed_past_headings(
+    seed_path: Path,
+) -> None:
+    """SA-46 AC1/AC15: "top" is before the first unused line, not line 1; every
+    other line (headings, notes, used seeds) is unchanged."""
+    added = _queue(seed_path).add_seed_top("Jump the queue")
+    assert added == AddedTopSeed("Jump the queue", 4, False)
+    assert seed_path.read_text() == SEED_FILE.replace(
+        "- [ ] First unused\n", "- [ ] Jump the queue\n- [ ] First unused\n"
+    )
+
+
+def test_add_seed_top_on_an_empty_queue_appends(tmp_path: Path) -> None:
+    """SA-46 AC2: with no unused seeds the line is appended, as /seed does."""
+    path = tmp_path / "seed.md"
+    path.write_text("# notes\n- [x] Used (used 2026-11-01)\n")
+    added = _queue(path).add_seed_top("Fresh")
+    assert added == AddedTopSeed("Fresh", 1, False)
+    assert path.read_text() == "# notes\n- [x] Used (used 2026-11-01)\n- [ ] Fresh\n"
+
+
+def test_repeated_add_seed_top_keeps_the_latest_first(seed_path: Path) -> None:
+    """SA-46 AC3: the most recent /seedtop is always position 1."""
+    queue = _queue(seed_path)
+    queue.add_seed_top("One")
+    queue.add_seed_top("Two")
+    queue.add_seed_top("Three")
+    assert queue.unused_texts()[:4] == ["Three", "Two", "One", "First unused"]
+
+
+def test_next_pick_is_the_new_seed(seed_path: Path) -> None:
+    """SA-46 AC5: the next run picks the new seed."""
+    queue = _queue(seed_path)
+    queue.add_seed_top("Jump the queue")
+    seed = queue.pick("draft-1")
+    assert seed is not None
+    assert seed.text == "Jump the queue"
+
+
+def test_a_pending_reservation_is_untouched_and_the_new_seed_comes_next(
+    seed_path: Path,
+) -> None:
+    """SA-46 AC6: the reserved seed stays reserved; the new one is picked next,
+    and once the first draft is binned its seed returns behind the new one."""
+    queue = _queue(seed_path)
+    assert queue.pick("draft-1").text == "First unused"  # type: ignore[union-attr]
+    queue.add_seed_top("Jump the queue")
+    reservations = json.loads((seed_path.parent / RESERVATIONS_FILENAME).read_text())
+    assert reservations == {"draft-1": "First unused"}
+    assert queue.pick("draft-2").text == "Jump the queue"  # type: ignore[union-attr]
+    queue.bin_draft("draft-2")
+    queue.bin_draft("draft-1")
+    assert queue.pick("draft-3").text == "Jump the queue"  # type: ignore[union-attr]
+    assert queue.unused_texts()[:2] == ["Jump the queue", "First unused"]
+
+
+def test_binning_the_draft_that_held_an_older_seed_returns_it_behind_the_new_one(
+    seed_path: Path,
+) -> None:
+    """SA-46 AC6: Bin releases the old seed, which sits behind the new one."""
+    queue = _queue(seed_path)
+    queue.pick("draft-1")
+    queue.add_seed_top("Jump the queue")
+    queue.bin_draft("draft-1")
+    first = queue.pick("draft-2")
+    assert first is not None
+    assert first.text == "Jump the queue"
+
+
+def test_add_seed_top_of_an_unreserved_duplicate_skips_it_and_moves_it(
+    seed_path: Path,
+) -> None:
+    """SA-46 AC7: the old line is skipped (keeping its text), the new one is first."""
+    added = _queue(seed_path).add_seed_top("second UNUSED")
+    assert added == AddedTopSeed("second UNUSED", 3, True)
+    text = seed_path.read_text()
+    assert "- [x] Second unused (skipped 2026-11-17)\n" in text
+    assert text.index("- [ ] second UNUSED") < text.index("- [ ] First unused")
+
+
+def test_the_skipped_line_and_the_new_line_share_text_but_only_the_new_one_is_picked(
+    seed_path: Path,
+) -> None:
+    """SA-46 risk: picking, listing and approving ignore the skipped copy."""
+    queue = _queue(seed_path)
+    queue.add_seed_top("First unused")
+    assert queue.unused_texts() == ["First unused", "Second unused", "Third unused"]
+    seed = queue.pick("draft-1")
+    assert seed is not None
+    assert "skipped" not in seed_path.read_text().splitlines()[seed.line_index]
+    queue.approve("draft-1")
+    assert "- [x] First unused (used 2026-11-17)" in seed_path.read_text()
+    assert queue.unused_texts() == ["Second unused", "Third unused"]
+
+
+def test_add_seed_top_of_a_reserved_duplicate_changes_nothing(seed_path: Path) -> None:
+    """SA-46 AC8: refused with the standard message; file untouched."""
+    queue = _queue(seed_path)
+    queue.pick("draft-1")
+    before = seed_path.read_text()
+    with pytest.raises(SeedInUseError, match="reserved by a pending draft"):
+        queue.add_seed_top("FIRST unused")
+    assert seed_path.read_text() == before
+
+
+def test_add_seed_top_allows_a_used_or_skipped_duplicate(tmp_path: Path) -> None:
+    """SA-46 AC9: a used or skipped copy does not count; the seed is added at the top."""
+    path = tmp_path / "seed.md"
+    path.write_text(
+        "- [x] Old one (used 2026-11-01)\n"
+        "- [x] Dropped (skipped 2026-11-02)\n"
+        "- [ ] Waiting\n"
+    )
+    queue = _queue(path)
+    assert queue.add_seed_top("old one").moved is False
+    assert queue.add_seed_top("DROPPED").moved is False
+    assert queue.unused_texts() == ["DROPPED", "old one", "Waiting"]
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        ("   ", "The seed is empty."),
+        ("x" * (MAX_SEED_LENGTH + 1), f"over {MAX_SEED_LENGTH} characters"),
+        ("bad\x07text", "control characters"),
+    ],
+)
+def test_add_seed_top_rejects_bad_text_like_add_seed(
+    seed_path: Path, text: str, reason: str
+) -> None:
+    """SA-46 AC10: the same validation and messages as add_seed; no change."""
+    before = seed_path.read_text()
+    with pytest.raises(InvalidSeedError, match=reason):
+        _queue(seed_path).add_seed_top(text)
+    assert seed_path.read_text() == before
+
+
+def test_add_seed_top_keeps_crlf_line_endings(tmp_path: Path) -> None:
+    """The inserted line matches a hand-edited CRLF file."""
+    path = tmp_path / "seed.md"
+    path.write_bytes(b"- [ ] Waiting\r\n")
+    _queue(path).add_seed_top("New")
+    assert path.read_bytes() == b"- [ ] New\r\n- [ ] Waiting\r\n"
+
+
+def test_add_seed_top_checks_skips_and_inserts_under_one_lock_and_one_write(
+    seed_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-46 AC12: a duplicate move is a single atomic write, taken under the lock."""
+    writes: list[str] = []
+    real = seed_queue.write_atomically
+
+    def spy(path: Path, content: str) -> None:
+        writes.append(content)
+        real(path, content)
+
+    monkeypatch.setattr(seed_queue, "write_atomically", spy)
+    monkeypatch.setattr(seed_module, "write_atomically", spy)
+    queue = _queue(seed_path)
+    with seed_path.parent.joinpath("seed-reservations.lock").open("a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        monkeypatch.setattr(seed_queue, "LOCK_TIMEOUT_SECONDS", 0.05)
+        with pytest.raises(ReservationBusyError):
+            queue.add_seed_top("Second unused")
+    assert writes == []
+    queue.add_seed_top("Second unused")
+    assert len(writes) == 1

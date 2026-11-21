@@ -1,4 +1,4 @@
-"""Telegram commands: /seed, /seeds, /unseed, /skip and /now.
+"""Telegram commands: /seed, /seedtop, /seeds, /unseed, /skip and /now.
 
 They let Stuart manage the queue and runs from the chat. The chat guard in
 ``bot`` already drops every other chat, so nothing here repeats that check.
@@ -35,6 +35,9 @@ UNSEED_MAX_DIGITS = 9
 
 SEED_USAGE = "Say what the seed is about: /seed <text>"
 SEED_ADDED = "Added to the queue ({count} unused): {text}"
+SEEDTOP_USAGE = "Say what the seed is about: /seedtop <text>"
+SEEDTOP_ADDED = "Added at position 1 ({count} unused): {text}"
+SEEDTOP_MOVED = "Moved to position 1 ({count} unused): {text}"
 SEED_REJECTED = "Not added. {reason}"
 SEEDS_EMPTY = "No unused seeds. The next run will invent one."
 SEEDS_HEADER = "{count} unused seeds, in order:"
@@ -88,7 +91,7 @@ def _is_seed_number(args: list[str]) -> bool:
 
 
 class CommandService:
-    """Handles the five commands."""
+    """Handles the six commands."""
 
     def __init__(
         self,
@@ -122,6 +125,31 @@ class CommandService:
             return
         await self._reply(
             update, SEED_ADDED.format(count=added.unused_count, text=added.text)
+        )
+
+    async def on_seedtop(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """``/seedtop <text>``: add an unused seed at position 1 and confirm.
+
+        It never starts a run; ``/now`` does that.
+        """
+        text = " ".join(context.args or []).strip()
+        if not text:
+            await self._reply(update, SEEDTOP_USAGE)
+            return
+        try:
+            added = await asyncio.to_thread(self._queue.add_seed_top, text)
+        except (InvalidSeedError, SeedInUseError) as error:
+            await self._reply(update, SEED_REJECTED.format(reason=error))
+            return
+        except Exception as error:  # a failed command must never kill the bot
+            logger.exception("Command /seedtop failed")
+            await self._fail(update, "/seedtop", error)
+            return
+        template = SEEDTOP_MOVED if added.moved else SEEDTOP_ADDED
+        await self._reply(
+            update, template.format(count=added.unused_count, text=added.text)
         )
 
     async def on_seeds(
@@ -214,8 +242,9 @@ class CommandService:
 
 
 def install_commands(application: Application, service: CommandService) -> None:
-    """Route the five commands to the service."""
+    """Route the six commands to the service."""
     application.add_handler(CommandHandler("seed", service.on_seed))
+    application.add_handler(CommandHandler("seedtop", service.on_seedtop))
     application.add_handler(CommandHandler("seeds", service.on_seeds))
     application.add_handler(CommandHandler("unseed", service.on_unseed))
     application.add_handler(CommandHandler("skip", service.on_skip))
