@@ -161,6 +161,7 @@ class RedoService:
                 checked.post.body_markdown,
                 steer,
                 checked.post.note_teaser,
+                checked.post.image_scene,
             )
         except DraftStateError:
             await bot.send_message(chat_id=pending.chat_id, text=ALREADY_HANDLED_TEXT)

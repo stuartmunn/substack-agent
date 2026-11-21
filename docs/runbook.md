@@ -143,6 +143,15 @@ hand and attach the post. Older drafts with no teaser send no teaser message. If
 the teaser message fails to send, you get an alert; the Substack draft is
 unaffected.
 
+After the teaser comes one more message: a ready-to-paste **Gemini image
+prompt** for a picture of Sir Humblebrag III doing what the post is about. Open
+the Gemini app, attach your reference picture of Sir Humblebrag III, paste the
+prompt and reply to the Telegram message with the image you like. The agent
+never generates images and never holds the reference picture (it is not in the
+repo). The prompt template is `prompts/image_prompt.md`. Older drafts with no
+scene send no prompt. A failed send alerts you; the Substack draft is
+unaffected.
+
 The agent used to try to publish too, but Substack's publish call answered
 `403` while draft creation worked. Why is still unknown; it is being looked
 into in [SA-42](https://stuartmunn.atlassian.net/browse/SA-42). Until that is

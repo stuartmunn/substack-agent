@@ -90,7 +90,11 @@ class Regenerator:
         if self.error is not None:
             raise self.error
         post = GeneratedPost(
-            f"New title {len(self.calls)}", "New sub", "New body", "New teaser"
+            f"New title {len(self.calls)}",
+            "New sub",
+            "New body",
+            "New teaser",
+            "New scene",
         )
         return CheckedPost(post, GUARD)
 

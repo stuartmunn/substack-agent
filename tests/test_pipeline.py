@@ -30,6 +30,7 @@ from humblebrag.drafts import (
 )
 from humblebrag.generator import PostGenerator
 from humblebrag.guard import MAX_GUARD_REGENERATIONS, SafetyGuard, generate_checked
+from humblebrag.image_prompt import build_image_prompt
 from humblebrag.persona import Persona
 from humblebrag.pipeline import (
     PROVISIONAL_PREFIX,
@@ -65,6 +66,7 @@ GOOD_POST = {
     "subtitle": "Quietly brilliant",
     "body_markdown": "I spilled my coffee today and learned nothing at all.",
     "note_teaser": "Coffee spilled, leadership gained.",
+    "image_scene": "He sips coffee in a grand library.",
 }
 PASS = json.dumps({"verdict": "pass", "reason": "obvious satire"})
 FAIL = json.dumps({"verdict": "fail", "reason": "too close to a real person"})
@@ -219,6 +221,7 @@ async def test_happy_path_goes_from_seed_to_preview(
     assert stored.status == STATUS_PENDING
     assert (stored.title, stored.subtitle) == ("A Humble Brew", "Quietly brilliant")
     assert stored.note_teaser == "Coffee spilled, leadership gained."
+    assert stored.image_scene == "He sips coffee in a grand library."
     assert stored.seed == "First seed"
     assert rig.claude.calls == ["generate", "guard"]
     [message] = rig.bot.messages
@@ -266,9 +269,10 @@ async def test_the_full_flow_approve_hands_over_one_draft_and_never_publishes(
     assert stored.substack_draft_id == "77"
     assert "2026-11-18" in rig.seed_path.read_text()
     assert rig.reservations() == {}
-    assert [m["text"] for m in rig.bot.messages[-2:]] == [
+    assert [m["text"] for m in rig.bot.messages[-3:]] == [
         HANDED_OVER_TEXT.format(url=EDITOR_URL),
         "Coffee spilled, leadership gained.",
+        build_image_prompt("He sips coffee in a grand library."),
     ]
 
 

@@ -15,9 +15,10 @@ MAX_ATTEMPTS = 2
 MIN_GENERATION_TOKENS = 4096
 TOKENS_PER_WORD_ALLOWANCE = 3
 JSON_OVERHEAD_TOKENS = 512
-REQUIRED_FIELDS = ("title", "subtitle", "body_markdown", "note_teaser")
+REQUIRED_FIELDS = ("title", "subtitle", "body_markdown", "note_teaser", "image_scene")
 MAX_TEASER_CHARS = 280
 MAX_TEASER_SENTENCES = 2
+MAX_SCENE_CHARS = 300
 MIN_COPIED_WORDS = 4
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
 _HASHTAG = re.compile(r"(?:^|\s)#\w")
@@ -40,13 +41,14 @@ class MalformedPostError(ValueError):
 
 @dataclass(frozen=True)
 class GeneratedPost:
-    """A generated Substack post and its Note teaser (text only, never posted
-    by the agent). No cover image."""
+    """A generated Substack post, its Note teaser and a one-sentence image scene
+    (text only: the agent never posts Notes or makes images)."""
 
     title: str
     subtitle: str
     body_markdown: str
     note_teaser: str
+    image_scene: str
 
 
 def _build_prompt(
@@ -62,13 +64,17 @@ def _build_prompt(
     parts.append(
         "Format override (this replaces the persona's Format section on "
         "length and title placement): reply with ONLY a JSON object with the "
-        'string keys "title", "subtitle", "body_markdown" and "note_teaser". '
+        'string keys "title", "subtitle", "body_markdown", "note_teaser" and '
+        '"image_scene". '
         f"body_markdown must be between {min_words} and {max_words} words, "
         "must not repeat the title, and must contain no links and no images. "
         f"note_teaser is a witty teaser for the post: at most "
         f"{MAX_TEASER_SENTENCES} sentences and {MAX_TEASER_CHARS} characters, "
         "in your voice, in your own words (never a sentence copied from the "
-        'body), with no links, no images, no hashtags and no "Agree?" sign-off.'
+        'body), with no links, no images, no hashtags and no "Agree?" sign-off. '
+        f"image_scene is ONE sentence of at most {MAX_SCENE_CHARS} characters "
+        "describing Sir Humblebrag III doing the activity the post is about: "
+        "no real people, brands, logos or text, and no links."
     )
     if problem:
         parts.append(f"Your previous reply was rejected: {problem}. Fix it.")
@@ -119,6 +125,19 @@ def _check_teaser(teaser: str, body: str) -> None:
         raise MalformedPostError("note_teaser copies a sentence from the body")
 
 
+def _check_scene(scene: str) -> None:
+    """Raise MalformedPostError unless ``scene`` meets the image scene rules."""
+    if len(scene) > MAX_SCENE_CHARS:
+        raise MalformedPostError(
+            f"image_scene has {len(scene)} characters, expected at most "
+            f"{MAX_SCENE_CHARS}"
+        )
+    if _IMAGE.search(scene):
+        raise MalformedPostError("image_scene contains an image")
+    if _LINK.search(scene):
+        raise MalformedPostError("image_scene contains a link")
+
+
 def _parse_post(reply: str, min_words: int, max_words: int) -> GeneratedPost:
     """Validate the model's reply as a post, or raise MalformedPostError."""
     try:
@@ -144,6 +163,7 @@ def _parse_post(reply: str, min_words: int, max_words: int) -> GeneratedPost:
             f"body_markdown has {word_count} words, expected {min_words} to {max_words}"
         )
     _check_teaser(values["note_teaser"], body)
+    _check_scene(values["image_scene"])
     return GeneratedPost(**values)
 
 
