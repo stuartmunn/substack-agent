@@ -6,7 +6,10 @@ away (so a retry updates it instead of creating a second one), mark the local
 draft ``handed_over``, mark the seed used, then reply with the editor link. A
 failed create leaves the draft pending with its buttons active; once the
 Substack draft exists, a failure in any later step alerts with the draft ID and
-link and never hides the link.
+link and never hides the link. After the link, a draft's Note teaser is sent
+alone in its own message so Stuart can copy it; Stuart creates the Note by hand
+(the agent never touches Notes). A failed teaser send alerts and rolls nothing
+back.
 """
 
 import asyncio
@@ -32,6 +35,7 @@ STEP_SAVE_ID = "save Substack draft ID"
 STEP_STATUS = "save handed-over status"
 STEP_SEED = "mark seed used"
 STEP_REPLY = "send reply"
+STEP_TEASER = "send Note teaser"
 IN_FLIGHT_TEXT = "Already handing this one to Substack, hold on."
 HANDED_OVER_TEXT = (
     "Draft ready in Substack. Open it, check it and publish it yourself: {url}"
@@ -53,6 +57,9 @@ class ApproveService:
         # Substack draft IDs created by this process, by local draft id: a retry
         # updates the draft even if saving the ID or status in the store failed.
         self._created: dict[int, str] = {}
+        # Drafts whose teaser this process has sent, so a retry after a
+        # bookkeeping failure (draft still pending) cannot send it twice.
+        self._teaser_sent: set[int] = set()
 
     async def on_approve_tap(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, draft: Draft
@@ -92,7 +99,12 @@ class ApproveService:
         if substack_id is None:
             return
         await self._record_handover(
-            context, chat_id, draft_id, substack_id, new=known_id is None
+            context,
+            chat_id,
+            draft_id,
+            substack_id,
+            new=known_id is None,
+            teaser=draft.note_teaser,
         )
         await self._remove_buttons(update, context, chat_id)
 
@@ -150,9 +162,10 @@ class ApproveService:
         substack_id: str,
         *,
         new: bool,
+        teaser: str,
     ) -> None:
         """Save the ID (if new), mark the draft handed over, mark the seed used,
-        then reply with the editor link.
+        reply with the editor link, then send the Note teaser (if there is one).
 
         The Substack draft exists, so a bookkeeping failure alerts with the step,
         draft ID and link but never hides the link or skips the later steps.
@@ -182,12 +195,29 @@ class ApproveService:
             STEP_REPLY,
             self._say(context, chat_id, HANDED_OVER_TEXT.format(url=url)),
         )
+        if teaser and draft_id not in self._teaser_sent:
+            await self._step(
+                problems,
+                STEP_TEASER,
+                self._send_teaser(context, chat_id, draft_id, teaser),
+            )
         if problems:
             await alert(
                 ALERT_EVENT,
                 f"Substack draft {substack_id} exists ({url}) for draft {draft_id}, "
                 "but " + "; and ".join(problems),
             )
+
+    async def _send_teaser(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        chat_id: int,
+        draft_id: int,
+        teaser: str,
+    ) -> None:
+        """Send the teaser alone, and remember it was sent."""
+        await self._say(context, chat_id, teaser)
+        self._teaser_sent.add(draft_id)
 
     @staticmethod
     async def _step(problems: list[str], step: str, work: Awaitable[object]) -> bool:

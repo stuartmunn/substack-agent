@@ -266,7 +266,10 @@ async def test_the_full_flow_approve_hands_over_one_draft_and_never_publishes(
     assert stored.substack_draft_id == "77"
     assert "2026-11-18" in rig.seed_path.read_text()
     assert rig.reservations() == {}
-    assert rig.bot.messages[-1]["text"] == HANDED_OVER_TEXT.format(url=EDITOR_URL)
+    assert [m["text"] for m in rig.bot.messages[-2:]] == [
+        HANDED_OVER_TEXT.format(url=EDITOR_URL),
+        "Coffee spilled, leadership gained.",
+    ]
 
 
 async def test_a_run_is_paused_when_too_many_drafts_are_pending(
