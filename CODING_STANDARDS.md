@@ -109,3 +109,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [MEM-01] In-memory per-key bookkeeping (sets and dicts of draft ids) is removed as soon as the durable store records the outcome, so a long-running process does not grow without bound (from PR #38, 2026-11-21)
 - [SEC-19] Code that fetches a user-supplied URL resolves the host and refuses any non-public address (loopback, private, link-local) before every request, including each redirect hop, and connects to the vetted address rather than resolving again (from PR #41, 2026-11-21)
 - [SEC-20] Content-type checks compare the parsed media type exactly, not a string prefix (from PR #41, 2026-11-21)
+- [ERR-24] Blocking calls with no native timeout (DNS lookups) run in a worker and are bounded by the remaining overall deadline (from PR #41, 2026-11-21)

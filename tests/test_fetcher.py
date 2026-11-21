@@ -5,6 +5,7 @@ All pages are saved fixtures served by a fake ``get``; there is no live network.
 
 import ast
 import socket
+import threading
 import tomllib
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -534,6 +535,27 @@ def test_a_host_that_does_not_resolve_is_a_couldnt_read_result(
     get = FakeGet()
     result = fetch_target(POST_URL, get=get)
     assert result.status is FetchStatus.COULDNT_READ
+    assert get.calls == []
+
+
+def test_a_hung_dns_lookup_runs_into_the_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ERR-02: a resolver that never answers cannot outlast the fetch timeout."""
+    release = threading.Event()
+
+    def hang(*args: Any, **kwargs: Any) -> list[tuple[Any, ...]]:
+        release.wait(5)
+        return _answer(PUBLIC_ADDRESS)
+
+    monkeypatch.setattr(fetcher_module.socket, "getaddrinfo", hang)
+    get = FakeGet()
+    try:
+        result = fetch_target(POST_URL, timeout=0.05, get=get)
+    finally:
+        release.set()
+    assert result.status is FetchStatus.COULDNT_READ
+    assert "timed out" in result.reason
     assert get.calls == []
 
 

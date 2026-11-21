@@ -5,6 +5,7 @@ its cookies or python-substack. It returns names-free plain text only.
 """
 
 import asyncio
+import concurrent.futures
 import ipaddress
 import logging
 import re
@@ -197,10 +198,23 @@ def _check_url(url: str) -> str:
     return host
 
 
-def _resolve_public_address(host: str) -> str:
+def _lookup(host: str, timeout: float) -> list[tuple]:
+    """Resolve ``host`` without blocking the caller for longer than ``timeout``."""
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        return executor.submit(
+            socket.getaddrinfo, host, HTTPS_PORT, type=socket.SOCK_STREAM
+        ).result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        raise _FetchError(FetchStatus.COULDNT_READ, "The fetch timed out.") from None
+    finally:
+        executor.shutdown(wait=False)
+
+
+def _resolve_public_address(host: str, timeout: float) -> str:
     """Return a public address for ``host``; refuse if any answer is not public."""
     try:
-        infos = socket.getaddrinfo(host, HTTPS_PORT, type=socket.SOCK_STREAM)
+        infos = _lookup(host, timeout)
     except (socket.gaierror, UnicodeError):
         raise _FetchError(
             FetchStatus.COULDNT_READ, "That link's host could not be found."
@@ -298,7 +312,7 @@ def _fetch_html(url: str, timeout: float, get: Getter) -> tuple[str, str]:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise _FetchError(FetchStatus.COULDNT_READ, "The fetch timed out.")
-        address = _resolve_public_address(host)
+        address = _resolve_public_address(host, remaining)
         response = get(
             url,
             address,
