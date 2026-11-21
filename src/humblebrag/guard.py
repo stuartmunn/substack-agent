@@ -106,11 +106,12 @@ class CheckedPost:
 
 
 def check_wordlist(post: GeneratedPost) -> GuardResult:
-    """Fail if the title, subtitle or body contains a wordlisted word."""
+    """Fail if the title, subtitle, body or Note teaser has a wordlisted word."""
     fields = {
         "title": post.title,
         "subtitle": post.subtitle,
         "body": post.body_markdown,
+        "note teaser": post.note_teaser,
     }
     hits = [
         name
@@ -140,11 +141,19 @@ class SafetyGuard:
         wordlist = check_wordlist(post)
         if not wordlist.passed:
             return wordlist
-        title, subtitle, body = (
+        title, subtitle, body, teaser = (
             _DRAFT_TAG.sub(NEUTRALISED_TAG, text)
-            for text in (post.title, post.subtitle, post.body_markdown)
+            for text in (
+                post.title,
+                post.subtitle,
+                post.body_markdown,
+                post.note_teaser,
+            )
         )
-        draft = f"<draft>\nTitle: {title}\nSubtitle: {subtitle}\n\n{body}\n</draft>"
+        draft = (
+            f"<draft>\nTitle: {title}\nSubtitle: {subtitle}\n"
+            f"Note teaser: {teaser}\n\n{body}\n</draft>"
+        )
         reply = await self._client.complete(
             CLASSIFIER_SYSTEM, draft, CLASSIFIER_MAX_TOKENS
         )

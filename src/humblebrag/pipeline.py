@@ -147,6 +147,7 @@ class RunPipeline:
                 post.body_markdown,
                 None,
                 self._max_pending,
+                post.note_teaser,
             )
         )
         try:

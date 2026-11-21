@@ -64,6 +64,7 @@ GOOD_POST = {
     "title": "A Humble Brew",
     "subtitle": "Quietly brilliant",
     "body_markdown": "I spilled my coffee today and learned nothing at all.",
+    "note_teaser": "Coffee spilled, leadership gained.",
 }
 PASS = json.dumps({"verdict": "pass", "reason": "obvious satire"})
 FAIL = json.dumps({"verdict": "fail", "reason": "too close to a real person"})
@@ -217,6 +218,7 @@ async def test_happy_path_goes_from_seed_to_preview(
     stored = rig.store.get(draft.id)
     assert stored.status == STATUS_PENDING
     assert (stored.title, stored.subtitle) == ("A Humble Brew", "Quietly brilliant")
+    assert stored.note_teaser == "Coffee spilled, leadership gained."
     assert stored.seed == "First seed"
     assert rig.claude.calls == ["generate", "guard"]
     [message] = rig.bot.messages

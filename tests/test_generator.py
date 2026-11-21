@@ -12,6 +12,7 @@ from humblebrag.config import Config, load_config
 from humblebrag.generator import (
     JSON_OVERHEAD_TOKENS,
     MAX_ATTEMPTS,
+    MAX_TEASER_CHARS,
     MIN_GENERATION_TOKENS,
     TOKENS_PER_WORD_ALLOWANCE,
     GeneratedPost,
@@ -31,6 +32,7 @@ ENV = {
 PERSONA = Persona(version=1, text="You are Sir Humblebrag.")
 SEED = "I spilled my coffee."
 STEER = "make it about trains"
+TEASER = "A cancelled train made me a locomotive of leadership. I am humbled."
 
 
 class StubClient:
@@ -63,6 +65,7 @@ def _reply(words: int = 300, **overrides: Any) -> str:
         "title": "Coffee, Leadership and Me",
         "subtitle": "A humble reflection",
         "body_markdown": _body(words),
+        "note_teaser": TEASER,
     }
     data.update(overrides)
     return json.dumps(data)
@@ -89,13 +92,14 @@ async def test_input_is_seed_and_optional_steer() -> None:
     assert "<steer>" not in without_steer.calls[0]["prompt"]
 
 
-async def test_output_has_title_subtitle_and_body() -> None:
-    """AC2: structured JSON becomes a post with the three fields."""
+async def test_output_has_title_subtitle_body_and_teaser() -> None:
+    """AC2 and SA-47 AC1: structured JSON becomes a post with all four fields."""
     post = await _generator(StubClient([_reply(300)])).generate(SEED)
     assert post == GeneratedPost(
         title="Coffee, Leadership and Me",
         subtitle="A humble reflection",
         body_markdown=_body(300),
+        note_teaser=TEASER,
     )
 
 
@@ -194,6 +198,7 @@ async def test_extra_keys_are_dropped_so_only_a_post_comes_out() -> None:
         "title",
         "subtitle",
         "body_markdown",
+        "note_teaser",
     ]
 
 
@@ -263,3 +268,98 @@ async def test_title_words_inside_the_body_are_fine() -> None:
     client = StubClient([_reply(body_markdown=body)])
     await _generator(client).generate(SEED)
     assert len(client.calls) == 1
+
+
+# SA-47: note teaser
+
+BAD_TEASERS = {
+    "missing": None,
+    "empty": "",
+    "blank": "   ",
+    "not a string": 7,
+    "too long": "A" + "b" * 280 + ".",
+    "three sentences": "One. Two. Three.",
+    "markdown link": "Read [more](https://example.com) now.",
+    "bare link": "See https://example.com for more.",
+    "image": "Look ![pic](x.png) here.",
+    "hashtag": "Humbled again. #Leadership",
+    "sign-off": "Humbled again. Agree?",
+    "copied sentence": "I am humbled by this extraordinary coffee based tragedy.",
+}
+
+
+def _reply_with_teaser(teaser: Any) -> str:
+    """A reply whose body holds a known sentence and whose teaser is ``teaser``."""
+    data = json.loads(_reply())
+    data["body_markdown"] = (
+        "I am humbled by this extraordinary coffee based tragedy.\n" + _body(300)
+    )
+    if teaser is None:
+        del data["note_teaser"]
+    else:
+        data["note_teaser"] = teaser
+    return json.dumps(data)
+
+
+@pytest.mark.parametrize("teaser", BAD_TEASERS.values(), ids=BAD_TEASERS.keys())
+async def test_a_bad_teaser_is_retried_once_then_succeeds(teaser: Any) -> None:
+    """SA-47 AC4: each rejection case takes the existing retry path."""
+    client = StubClient([_reply_with_teaser(teaser), _reply()])
+    post = await _generator(client).generate(SEED)
+    assert len(client.calls) == 2
+    assert "note_teaser" in client.calls[1]["prompt"]
+    assert post.note_teaser == TEASER
+
+
+@pytest.mark.parametrize("teaser", BAD_TEASERS.values(), ids=BAD_TEASERS.keys())
+async def test_a_teaser_that_fails_twice_raises_post_generation_error(
+    teaser: Any,
+) -> None:
+    """SA-47 AC4: if the retry also fails, PostGenerationError is raised."""
+    client = StubClient([_reply_with_teaser(teaser)] * 2)
+    with pytest.raises(PostGenerationError):
+        await _generator(client).generate(SEED)
+
+
+@pytest.mark.parametrize(
+    "teaser",
+    [
+        "Short and sweet.",
+        "A" * 279 + ".",
+        "What a day! I am humbled.",
+        "I spilled coffee and found leadership.",
+    ],
+)
+async def test_valid_teasers_are_accepted(teaser: str) -> None:
+    """SA-47 AC2: up to two sentences and 280 characters pass."""
+    post = await _generator(StubClient([_reply_with_teaser(teaser)])).generate(SEED)
+    assert post.note_teaser == teaser
+
+
+async def test_the_teaser_is_stripped() -> None:
+    """A teaser with stray whitespace is stored trimmed."""
+    post = await _generator(StubClient([_reply(note_teaser=f"  {TEASER}\n")])).generate(
+        SEED
+    )
+    assert post.note_teaser == TEASER
+
+
+async def test_the_prompt_describes_the_teaser_rules() -> None:
+    """SA-47 AC1/AC2/AC3: the format override asks for the field and its limits."""
+    client = StubClient([_reply()])
+    await _generator(client).generate(SEED)
+    prompt = client.calls[0]["prompt"]
+    assert '"note_teaser"' in prompt
+    assert "280 characters" in prompt
+    assert "2 sentences" in prompt
+    assert "hashtags" in prompt
+
+
+async def test_the_output_budget_has_headroom_for_the_teaser() -> None:
+    """SA-47 risk: the token budget still covers the maximum body plus a teaser."""
+    config = load_config(ENV)
+    client = StubClient([_reply()])
+    await _generator(client, config).generate(SEED)
+    teaser_tokens = MAX_TEASER_CHARS  # a token is at least one character
+    body_tokens = config.max_post_words * TOKENS_PER_WORD_ALLOWANCE
+    assert client.calls[0]["max_tokens"] >= body_tokens + teaser_tokens
