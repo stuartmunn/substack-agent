@@ -38,7 +38,11 @@ ALERT_EVENT = "reply"
 REDO_PREFIX = "rpr"
 BIN_PREFIX = "rpb"
 CALLBACK_SEPARATOR = ":"
-REPLY_CALLBACK_PATTERN = r"^rp[rb]:\d+$"
+_REPLY_PREFIXES = f"(?:{REDO_PREFIX}|{BIN_PREFIX}){CALLBACK_SEPARATOR}"
+_REPLY_BODY = rf"{_REPLY_PREFIXES}\d+$"
+REPLY_CALLBACK_PATTERN = re.compile(rf"^{_REPLY_BODY}")
+# The exact complement, for the draft button handler: every other callback.
+NOT_REPLY_CALLBACK_PATTERN = re.compile(rf"^(?!{_REPLY_BODY})")
 MAX_SESSIONS = 20
 STEER_SEPARATOR = "|"
 REDO_LABEL = "🔁 Redo"

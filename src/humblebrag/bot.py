@@ -3,7 +3,6 @@
 import asyncio
 import contextlib
 import logging
-import re
 from collections.abc import Awaitable, Callable
 
 from telegram import Update
@@ -21,7 +20,7 @@ from humblebrag.alerts import alert, configure_alerts, describe_error, telegram_
 from humblebrag.buttons import STORE_KEY, handle_button
 from humblebrag.config import Config
 from humblebrag.drafts import DraftStore
-from humblebrag.reply import REPLY_CALLBACK_PATTERN
+from humblebrag.reply import NOT_REPLY_CALLBACK_PATTERN
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +48,6 @@ COMMANDS: dict[str, str] = {
 }
 HELP_COMMANDS = ["start", "help"]
 ALLOWED_CHAT_KEY = "allowed_chat_id"
-# Draft buttons take every callback except the reply buttons' own.
-NOT_REPLY_CALLBACK_PATTERN = re.compile(rf"(?!{REPLY_CALLBACK_PATTERN[1:]})")
 
 
 def help_text() -> str:

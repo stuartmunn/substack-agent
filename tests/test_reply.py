@@ -2,7 +2,6 @@
 
 import ast
 import asyncio
-import re
 from collections.abc import Coroutine, Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -511,16 +510,24 @@ def test_the_reply_code_never_touches_the_publisher_or_the_run_lock() -> None:
     assert "Lock" not in (source_dir / "reply.py").read_text().replace("run lock", "")
 
 
-async def test_reply_buttons_and_draft_buttons_do_not_overlap() -> None:
-    """AC15: a reply button is not a draft button, and the other way round."""
+def test_reply_buttons_and_draft_buttons_do_not_overlap() -> None:
+    """AC15: the two patterns are exact complements: every callback matches one."""
     reply_pattern = reply_module.REPLY_CALLBACK_PATTERN
-    draft_pattern = bot_module.NOT_REPLY_CALLBACK_PATTERN
-    for data in ("rpr:1", "rpb:42"):
-        assert draft_pattern.match(data) is None
-    for action in ("approve", "redo", "bin"):
-        draft_data = callback_data(action, 1)
-        assert draft_pattern.match(draft_data) is not None
-        assert not re.match(reply_pattern, draft_data)
+    draft_pattern = reply_module.NOT_REPLY_CALLBACK_PATTERN
+    assert bot_module.NOT_REPLY_CALLBACK_PATTERN is draft_pattern
+    samples = [
+        f"{prefix}{reply_module.CALLBACK_SEPARATOR}{number}"
+        for prefix in (reply_module.REDO_PREFIX, reply_module.BIN_PREFIX)
+        for number in ("1", "42")
+    ]
+    samples += [callback_data(action, 1) for action in ("approve", "redo", "bin")]
+    samples += ["", "junk", "rp", "rpr:", "rpr:x", "xrpr:1", "rpr:1x", "r:1", "b:1"]
+    for data in samples:
+        assert (reply_pattern.match(data) is None) != (
+            draft_pattern.match(data) is None
+        ), data
+    for data in samples[:4]:
+        assert reply_pattern.match(data) is not None
 
 
 def test_install_reply_registers_the_command_and_its_buttons() -> None:
