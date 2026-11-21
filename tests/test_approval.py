@@ -685,3 +685,21 @@ async def test_the_teaser_is_sent_even_if_the_link_reply_failed(
     assert ht.bot.sent == [TEASER]
     assert len(alerts) == 1
     assert "send reply" in alerts[0]
+
+
+async def test_the_sent_teaser_bookkeeping_is_cleared_once_handed_over(
+    ht: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR-Agent: the in-memory set only holds drafts the store still has pending."""
+    await ht.tap()
+    assert ht.service._teaser_sent == set()
+    assert ht.service._created == {}
+
+
+async def test_the_sent_teaser_bookkeeping_is_kept_while_the_draft_is_pending(
+    ht: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The entry stays after a failed status write, which is when a retry needs it."""
+    _break(monkeypatch, ht.store, "mark_handed_over")
+    await ht.tap()
+    assert ht.service._teaser_sent == {ht.draft.id}

@@ -57,8 +57,8 @@ class ApproveService:
         # Substack draft IDs created by this process, by local draft id: a retry
         # updates the draft even if saving the ID or status in the store failed.
         self._created: dict[int, str] = {}
-        # Drafts whose teaser this process has sent, so a retry after a
-        # bookkeeping failure (draft still pending) cannot send it twice.
+        # Drafts whose teaser this process has sent while the store still says
+        # pending, so a retry cannot send it twice; cleared once handed over.
         self._teaser_sent: set[int] = set()
 
     async def on_approve_tap(
@@ -201,6 +201,8 @@ class ApproveService:
                 STEP_TEASER,
                 self._send_teaser(context, chat_id, draft_id, teaser),
             )
+        if stored:
+            self._teaser_sent.discard(draft_id)  # the status now blocks a repeat
         if problems:
             await alert(
                 ALERT_EVENT,
