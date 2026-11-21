@@ -18,6 +18,7 @@ DEFAULT_TZ = "Europe/London"
 DEFAULT_MIN_POST_WORDS = 250
 DEFAULT_MAX_POST_WORDS = 600
 DEFAULT_MAX_PENDING_DRAFTS = 7
+DEFAULT_FETCH_TIMEOUT_SECONDS = 10
 EXIT_CONFIG_ERROR = 1
 PUBLICATION_URL_SETTING = "SUBSTACK_PUBLICATION_URL"
 PUBLICATION_URL_FORMAT = (
@@ -49,6 +50,7 @@ class Config:
     min_post_words: int = DEFAULT_MIN_POST_WORDS
     max_post_words: int = DEFAULT_MAX_POST_WORDS
     max_pending_drafts: int = DEFAULT_MAX_PENDING_DRAFTS
+    fetch_timeout_seconds: int = DEFAULT_FETCH_TIMEOUT_SECONDS
 
 
 def _read_value(env: Mapping[str, str], name: str) -> str | None:
@@ -160,6 +162,9 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         max_post_words=max_words,
         max_pending_drafts=_parse_positive_int(
             source, "MAX_PENDING_DRAFTS", DEFAULT_MAX_PENDING_DRAFTS
+        ),
+        fetch_timeout_seconds=_parse_positive_int(
+            source, "FETCH_TIMEOUT_SECONDS", DEFAULT_FETCH_TIMEOUT_SECONDS
         ),
     )
 
