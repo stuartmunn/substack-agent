@@ -14,9 +14,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
+from requests.adapters import HTTPAdapter
 
 from humblebrag.alerts import alert
 
@@ -51,7 +52,7 @@ COMMENT_PATH = re.compile(r"^/p/[^/]+/comment/\d+/?$")
 POST_PATH = re.compile(r"^/p/[^/]+/?$")
 NOTE_PATH = re.compile(r"^/(@[^/]+|profile/[^/]+)/note/c-\d+/?$|^/note/c-\d+/?$")
 
-Getter = Callable[..., requests.Response]
+Getter = Callable[..., requests.Response]  # (url, address, **request options)
 
 
 class TargetType(StrEnum):
@@ -196,19 +197,67 @@ def _check_url(url: str) -> str:
     return host
 
 
-def _require_public_host(host: str) -> None:
-    """Refuse a host that does not resolve, or resolves to a non-public address."""
+def _resolve_public_address(host: str) -> str:
+    """Return a public address for ``host``; refuse if any answer is not public."""
     try:
         infos = socket.getaddrinfo(host, HTTPS_PORT, type=socket.SOCK_STREAM)
     except (socket.gaierror, UnicodeError):
         raise _FetchError(
             FetchStatus.COULDNT_READ, "That link's host could not be found."
         ) from None
-    addresses = {info[4][0] for info in infos}
+    addresses = [str(info[4][0]).split("%")[0] for info in infos]
     if not addresses or not all(
-        ipaddress.ip_address(address.split("%")[0]).is_global for address in addresses
+        ipaddress.ip_address(address).is_global for address in addresses
     ):
         raise _FetchError(FetchStatus.REJECTED, PRIVATE_HOST_REASON)
+    return addresses[0]
+
+
+class _PinnedAdapter(HTTPAdapter):
+    """Connect to a vetted IP while TLS still checks the real hostname."""
+
+    def __init__(self, hostname: str) -> None:
+        self._hostname = hostname
+        super().__init__()
+
+    def init_poolmanager(
+        self, connections: int, maxsize: int, block: bool = False, **pool_kwargs: str
+    ) -> None:
+        """Send the hostname as SNI and verify the certificate against it."""
+        super().init_poolmanager(
+            connections,
+            maxsize,
+            block,
+            server_hostname=self._hostname,
+            assert_hostname=self._hostname,
+            **pool_kwargs,
+        )
+
+
+def get_pinned(url: str, address: str, **kwargs: object) -> requests.Response:
+    """GET ``url`` but connect to ``address``, so the vetted IP is the one used."""
+    parts = urlsplit(url)
+    hostname = parts.hostname or ""
+    ip_host = f"[{address}]" if ":" in address else address
+    port = f":{parts.port}" if parts.port else ""
+    pinned_url = urlunsplit(parts._replace(netloc=ip_host + port))
+    headers = {**dict(kwargs.pop("headers", {})), "Host": hostname + port}
+    session = requests.Session()
+    session.mount("https://", _PinnedAdapter(hostname))
+    try:
+        response = session.get(pinned_url, headers=headers, **kwargs)
+    except BaseException:
+        session.close()
+        raise
+    release = response.close
+
+    def close() -> None:
+        """Release the response and the session that owns its connection."""
+        release()
+        session.close()
+
+    response.close = close
+    return response
 
 
 def classify_path(path: str) -> TargetType:
@@ -227,7 +276,7 @@ def classify_path(path: str) -> TargetType:
 def _read_body(response: requests.Response, deadline: float) -> str:
     """Read at most MAX_BODY_BYTES of the body, within the overall deadline."""
     content_type = response.headers.get("Content-Type", "").lower()
-    if not content_type.startswith(HTML_CONTENT_TYPES):
+    if content_type.split(";")[0].strip() not in HTML_CONTENT_TYPES:
         raise _FetchError(FetchStatus.COULDNT_READ, "The page is not HTML.")
     chunks: list[bytes] = []
     size = 0
@@ -249,9 +298,10 @@ def _fetch_html(url: str, timeout: float, get: Getter) -> tuple[str, str]:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise _FetchError(FetchStatus.COULDNT_READ, "The fetch timed out.")
-        _require_public_host(host)
+        address = _resolve_public_address(host)
         response = get(
             url,
+            address,
             headers={"User-Agent": USER_AGENT, "Accept": ACCEPT},
             timeout=remaining,
             allow_redirects=False,
@@ -313,7 +363,7 @@ def extract_target(html: str, target_type: TargetType) -> FetchResult:
 def fetch_target(
     url: str,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
-    get: Getter = requests.get,
+    get: Getter = get_pinned,
 ) -> FetchResult:
     """Fetch a Substack link and return its text; never raises.
 
@@ -338,7 +388,7 @@ def fetch_target(
 async def read_substack_link(
     url: str,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
-    get: Getter = requests.get,
+    get: Getter = get_pinned,
 ) -> FetchResult:
     """Fetch off the event loop; alert Stuart when a real read fails."""
     result = await asyncio.to_thread(fetch_target, url, timeout, get)

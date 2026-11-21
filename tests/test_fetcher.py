@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 import requests
+from requests.adapters import HTTPAdapter
 
 from humblebrag import fetcher as fetcher_module
 from humblebrag.alerts import configure_alerts
@@ -24,6 +25,7 @@ from humblebrag.fetcher import (
     FetchStatus,
     TargetType,
     fetch_target,
+    get_pinned,
     read_substack_link,
 )
 
@@ -73,9 +75,9 @@ class FakeGet:
         self.responses = list(responses)
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    def __call__(self, url: str, **kwargs: Any) -> FakeResponse:
+    def __call__(self, url: str, address: str, **kwargs: Any) -> FakeResponse:
         """Return or raise the next scripted outcome."""
-        self.calls.append((url, kwargs))
+        self.calls.append((url, {**kwargs, "address": address}))
         outcome = self.responses.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
@@ -271,10 +273,97 @@ def test_the_request_is_a_plain_get_with_no_credentials() -> None:
     assert "humblebrag.config" not in imported
 
 
-def test_the_default_getter_is_requests_get() -> None:
-    """AC5: the real fetch uses plain ``requests.get``."""
+def test_the_default_getter_is_the_pinned_requests_getter() -> None:
+    """AC5: the real fetch is a plain ``requests`` GET with no session state."""
     assert fetcher_module.fetch_target.__defaults__ is not None
-    assert fetcher_module.fetch_target.__defaults__[1] is requests.get
+    assert fetcher_module.fetch_target.__defaults__[1] is fetcher_module.get_pinned
+
+
+# DNS rebinding: the request connects to the address that was vetted
+
+
+def test_the_vetted_address_is_passed_to_the_request() -> None:
+    """The address checked is the address handed to the getter, on every hop."""
+    get = FakeGet(_redirect(CUSTOM_URL), FakeResponse(body=_page("post.html")))
+    fetch_target(POST_URL, get=get)
+    assert [call[1]["address"] for call in get.calls] == [PUBLIC_ADDRESS] * 2
+
+
+def _capture_pinned_request(
+    monkeypatch: pytest.MonkeyPatch, url: str, address: str
+) -> tuple[requests.PreparedRequest, HTTPAdapter]:
+    """Run ``get_pinned`` against a stub transport; return what it would send."""
+    seen: list[tuple[requests.PreparedRequest, HTTPAdapter]] = []
+
+    def send(
+        self: HTTPAdapter, request: requests.PreparedRequest, **kwargs: Any
+    ) -> requests.Response:
+        seen.append((request, self))
+        response = requests.Response()
+        response.status_code = 200
+        return response
+
+    monkeypatch.setattr(HTTPAdapter, "send", send)
+    get_pinned(url, address, headers={"Accept": "x"}, timeout=3, stream=True)
+    return seen[0]
+
+
+def test_the_pinned_getter_connects_to_the_ip_and_keeps_the_hostname(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The URL carries the IP; Host, SNI and certificate checks use the name."""
+    request, adapter = _capture_pinned_request(
+        monkeypatch, "https://blog.example.org/p/a-humble-post?x=1", PUBLIC_ADDRESS
+    )
+    assert request.url == f"https://{PUBLIC_ADDRESS}/p/a-humble-post?x=1"
+    assert request.headers["Host"] == "blog.example.org"
+    assert request.headers["Accept"] == "x"
+    kwargs = adapter.poolmanager.connection_pool_kw
+    assert kwargs["server_hostname"] == "blog.example.org"
+    assert kwargs["assert_hostname"] == "blog.example.org"
+
+
+def test_the_pinned_getter_brackets_an_ipv6_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An IPv6 answer is a valid URL host."""
+    request, _ = _capture_pinned_request(
+        monkeypatch, "https://blog.example.org:8443/p/x", "2606:2800:220:1::1"
+    )
+    assert request.url == "https://[2606:2800:220:1::1]:8443/p/x"
+    assert request.headers["Host"] == "blog.example.org:8443"
+
+
+def test_closing_a_pinned_response_closes_its_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No session or connection outlives the response."""
+    closed: list[bool] = []
+    monkeypatch.setattr(
+        fetcher_module.requests.Session, "close", lambda self: closed.append(True)
+    )
+
+    def send(
+        self: HTTPAdapter, request: requests.PreparedRequest, **kwargs: Any
+    ) -> requests.Response:
+        response = requests.Response()
+        response.status_code = 200
+        return response
+
+    monkeypatch.setattr(HTTPAdapter, "send", send)
+    response = get_pinned(POST_URL, PUBLIC_ADDRESS, headers={}, timeout=3)
+    response.close()
+    assert closed == [True]
+
+
+def test_a_content_type_must_match_exactly() -> None:
+    """text/html-something is not HTML; parameters after a semicolon are fine."""
+    odd = FakeResponse(body=_page("post.html"), headers={"Content-Type": "text/html-x"})
+    assert fetch_target(POST_URL, get=FakeGet(odd)).status is FetchStatus.COULDNT_READ
+    upper = FakeResponse(
+        body=_page("post.html"), headers={"Content-Type": "Text/HTML ; charset=UTF-8"}
+    )
+    assert fetch_target(POST_URL, get=FakeGet(upper)).ok
 
 
 # AC6: timeout, redirects, size
