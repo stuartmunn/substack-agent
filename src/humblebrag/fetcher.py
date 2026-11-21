@@ -22,10 +22,11 @@ import requests
 from requests.adapters import HTTPAdapter
 
 from humblebrag.alerts import alert
+from humblebrag.config import DEFAULT_FETCH_TIMEOUT_SECONDS
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT_SECONDS = 10.0
+DEFAULT_TIMEOUT_SECONDS = float(DEFAULT_FETCH_TIMEOUT_SECONDS)
 MAX_REDIRECTS = 5
 MAX_BODY_BYTES = 2 * 1024 * 1024
 CHUNK_BYTES = 8192

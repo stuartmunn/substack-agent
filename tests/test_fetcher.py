@@ -151,6 +151,15 @@ def test_a_comment_returns_its_text_and_the_parent_post_title() -> None:
     assert result.parent_title == 'The "Humble" Post'
 
 
+def test_a_post_title_containing_the_author_separator_is_kept_whole() -> None:
+    """The last " - by " is the author's, so an earlier one stays in the title."""
+    page = _page("comment.html").replace(
+        b"The &quot;Humble&quot; Post", b"Learn SQL - by Example"
+    )
+    result = fetch_target(COMMENT_URL, get=FakeGet(FakeResponse(body=page)))
+    assert result.parent_title == "Learn SQL - by Example"
+
+
 def test_a_comment_without_a_recognisable_title_has_no_parent_title() -> None:
     """AC1: the title is only given when it is on the page in the known form."""
     page = _page("comment.html").replace(b"Comments - ", b"")
@@ -271,7 +280,6 @@ def test_the_request_is_a_plain_get_with_no_credentials() -> None:
     }
     assert not {name for name in imported if "substack" in name.split(".")[0]}
     assert "humblebrag.publisher" not in imported
-    assert "humblebrag.config" not in imported
 
 
 def test_the_default_getter_is_the_pinned_requests_getter() -> None:
@@ -373,6 +381,7 @@ def test_a_content_type_must_match_exactly() -> None:
 def test_the_timeout_defaults_to_ten_seconds_and_is_configurable() -> None:
     """AC6: 10 s by default, from FETCH_TIMEOUT_SECONDS in config."""
     assert DEFAULT_TIMEOUT_SECONDS == 10.0
+    assert DEFAULT_TIMEOUT_SECONDS == float(DEFAULT_FETCH_TIMEOUT_SECONDS)
     assert DEFAULT_FETCH_TIMEOUT_SECONDS == 10
     env = {
         "TELEGRAM_BOT_TOKEN": "t",

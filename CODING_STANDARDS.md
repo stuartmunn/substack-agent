@@ -110,3 +110,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [SEC-19] Code that fetches a user-supplied URL resolves the host and refuses any non-public address (loopback, private, link-local) before every request, including each redirect hop, and connects to the vetted address rather than resolving again (from PR #41, 2026-11-21)
 - [SEC-20] Content-type checks compare the parsed media type exactly, not a string prefix (from PR #41, 2026-11-21)
 - [ERR-24] Blocking calls with no native timeout (DNS lookups) run in a worker and are bounded by the remaining overall deadline, with a cap on stuck workers so a stalling host cannot leak threads (from PR #41, 2026-11-21)
+- [GEN-09] A default that exists in config is imported from there, not repeated as a second literal in the module that uses it (from PR #41, 2026-11-21)
