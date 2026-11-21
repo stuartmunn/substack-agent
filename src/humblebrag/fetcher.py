@@ -305,6 +305,18 @@ def classify_path(path: str) -> TargetType:
     )
 
 
+def classify_link(url: str) -> TargetType | None:
+    """What the link points at, judged from the URL alone (no request), or None.
+
+    None means the link is not an HTTPS post, Note or comment link.
+    """
+    try:
+        _check_url(url)
+        return classify_path(urlsplit(url).path)
+    except _FetchError:
+        return None
+
+
 def _read_body(response: requests.Response, deadline: float) -> str:
     """Read at most MAX_BODY_BYTES of the body, within the overall deadline."""
     content_type = response.headers.get("Content-Type", "").lower()

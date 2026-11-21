@@ -24,14 +24,22 @@ from humblebrag.claude_client import ClaudeClient
 from humblebrag.commands import CommandService, RunCoordinator, install_commands
 from humblebrag.config import Config
 from humblebrag.drafts import Draft, DraftStore, RunGate
+from humblebrag.fetcher import FetchResult, read_substack_link
 from humblebrag.generator import PostGenerator
-from humblebrag.guard import CheckedPost, SafetyGuard, generate_checked
+from humblebrag.guard import (
+    CheckedPost,
+    SafetyGuard,
+    generate_checked,
+    generate_checked_reply,
+)
 from humblebrag.image_reply import ImageReplyService, install_image_reply
 from humblebrag.persona import load_persona
 from humblebrag.pipeline import RunPipeline
 from humblebrag.preview import send_preview
 from humblebrag.publisher import SubstackPublisher
 from humblebrag.redo import RedoService, install_redo
+from humblebrag.reply import CheckedReply, ReplyService, install_reply
+from humblebrag.reply_generator import ReplyGenerator, ReplyTarget
 from humblebrag.scheduler import Scheduler, SchedulerState
 from humblebrag.seed_provider import SeedProvider
 from humblebrag.seed_queue import SeedQueue
@@ -73,16 +81,33 @@ class Runtime:
             self._data_dir / SEED_FILENAME, lambda: datetime.now(config.tz).date()
         )
         client = ClaudeClient(config)
-        generator = PostGenerator(client, load_persona(), config)
+        persona = load_persona()
+        generator = PostGenerator(client, persona, config)
+        reply_generator = ReplyGenerator(client, persona)
         guard = SafetyGuard(client)
 
         async def generate(seed: str, steer: str | None) -> CheckedPost:
             return await generate_checked(generator, guard, seed, steer)
 
+        async def generate_reply(
+            target: ReplyTarget, steer: str | None
+        ) -> CheckedReply:
+            text, result = await generate_checked_reply(
+                lambda current: reply_generator.generate(target, current),
+                lambda reply: reply,
+                guard,
+                steer,
+            )
+            return CheckedReply(text, result)
+
+        async def read_link(url: str) -> FetchResult:
+            return await read_substack_link(url, config.fetch_timeout_seconds)
+
         async def preview(draft: Draft, guard_line: str | None) -> None:
             await send_preview(application.bot, chat_id, draft, guard_line)
 
         install_redo(application, RedoService(store, generate))
+        install_reply(application, ReplyService(read_link, generate_reply))
         install_bin(application, BinService(store, queue))
         install_approve(application, ApproveService(store, queue, self.publisher))
         install_image_reply(

@@ -177,6 +177,35 @@ The agent used to try to publish too, but Substack's publish call answered
 into in [SA-42](https://stuartmunn.atlassian.net/browse/SA-42). Until that is
 settled, publishing stays a manual step in the editor.
 
+## Reply to a Substack link
+
+`/reply <link>` makes Sir Humblebrag write an in-character reply to a Substack
+post, Note or comment, for you to copy and paste under it yourself. The agent
+never posts anything to Substack and never uses the Substack session for this.
+
+- Send `/reply https://example.substack.com/p/some-post`. The bot reads the
+  public page (a plain, unauthenticated fetch) and sends back the reply as plain
+  text, with **Redo** and **Bin** buttons. Long-press the message to copy it.
+- **Steer:** add `| <steer>` on the first line, for example
+  `/reply <link> | more smug`. Only the first line is read for a steer.
+- **Paste fallback:** if the bot says it couldn't read the link (some pages are
+  drawn by JavaScript), send the link again with the text on the lines after
+  it: the first line is `/reply <link>` (plus an optional `| steer`) and the
+  rest of the message is the text to answer. The bot then skips the fetch. A
+  `|` in the pasted text is left alone.
+- **Redo** writes a fresh reply from the same text and steer, without fetching
+  again. A reply gets 3 redos. **Bin** deletes the message and forgets it.
+  Reply state is kept in memory only, so after a restart old reply buttons say
+  the reply is no longer available: send `/reply` again.
+- Every reply goes through the same tone and safety guard as the daily post,
+  including a check that it names nobody (author, commenters or anyone else). A
+  reply that fails is regenerated twice, then you get an alert and no reply.
+- `/reply` runs alongside the daily run and `/now`; it does not wait for them
+  and its buttons never touch daily drafts.
+- Only links over HTTPS are accepted. A custom domain is accepted only if the
+  page turns out to be a Substack page. `FETCH_TIMEOUT_SECONDS` (default 10)
+  sets how long the fetch may take.
+
 ## Edit `seed.md` by hand
 
 For a quick add, use Telegram instead: `/seed <text>` appends a seed and
