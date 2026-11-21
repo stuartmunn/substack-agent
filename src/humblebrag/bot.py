@@ -40,10 +40,12 @@ COMMANDS: dict[str, str] = {
     "start": "Show the list of commands",
     "help": "Show the list of commands",
     "seed": "Add a seed to the queue: /seed <text>",
+    "seedtop": "Add a seed at the top of the queue: /seedtop <text>",
     "seeds": "List the unused seeds",
     "unseed": "Skip an unused seed by its number: /unseed <number>",
     "skip": "Skip the next scheduled run only",
     "now": "Run now, without touching the daily schedule",
+    "nosteer": "Redo with no steer (only works while a Redo is waiting on a steer)",
     "reply": "Reply in character to a Substack link: /reply <link> [| steer]",
 }
 HELP_COMMANDS = ["start", "help"]
