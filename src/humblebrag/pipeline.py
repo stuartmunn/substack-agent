@@ -148,6 +148,7 @@ class RunPipeline:
                 None,
                 self._max_pending,
                 post.note_teaser,
+                post.image_scene,
             )
         )
         try:

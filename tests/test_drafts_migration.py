@@ -536,3 +536,80 @@ def test_redo_replaces_the_teaser(tmp_path: Path) -> None:
     assert store.apply_redo(draft.id, "T3", "S3", "B3", None, "Third.").note_teaser == (
         "Third."
     )
+
+
+# SA-49: the image_scene column
+
+
+def _read_scenes(path: Path) -> list[tuple]:
+    """Every row's image_scene, in id order."""
+    return _read(path, "SELECT image_scene FROM drafts ORDER BY id")
+
+
+@pytest.fixture
+def pre_scene_db(tmp_path: Path) -> Path:
+    """A database as SA-47 left it: it has note_teaser but no image_scene."""
+    path = tmp_path / "humblebrag.db"
+    DraftStore(path).create("seed", "T", "S", "B", note_teaser="Teaser")
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE drafts DROP COLUMN image_scene")
+    connection.commit()
+    connection.close()
+    return path
+
+
+def test_a_fresh_database_has_the_scene_column(tmp_path: Path) -> None:
+    """SA-49 AC5: a new database has the column, defaulting to an empty string."""
+    store = DraftStore(tmp_path / "d.db")
+    assert store.create("seed", "T", "S", "B").image_scene == ""
+
+
+def test_the_scene_is_stored_with_a_new_draft(tmp_path: Path) -> None:
+    """SA-49 AC5: the scene given at creation is stored and loaded."""
+    store = DraftStore(tmp_path / "d.db")
+    draft = store.create("seed", "T", "S", "B", image_scene="A scene.")
+    assert store.get(draft.id).image_scene == "A scene."
+
+
+def test_a_pre_scene_database_gains_the_column_and_keeps_its_rows(
+    pre_scene_db: Path,
+) -> None:
+    """SA-49 AC5: existing rows get an empty scene and keep their teaser."""
+    assert "image_scene" not in str(_read(pre_scene_db, "PRAGMA table_info(drafts)"))
+    draft = DraftStore(pre_scene_db).get(1)
+    assert (draft.title, draft.note_teaser, draft.image_scene) == ("T", "Teaser", "")
+    assert _read_scenes(pre_scene_db) == [("",)]
+
+
+def test_a_pre_teaser_database_gains_both_columns(pre_teaser_db: Path) -> None:
+    """A database with neither later column gets both, in one migration."""
+    connection = sqlite3.connect(pre_teaser_db)
+    connection.execute("ALTER TABLE drafts DROP COLUMN image_scene")
+    connection.commit()
+    connection.close()
+    draft = DraftStore(pre_teaser_db).get(1)
+    assert (draft.note_teaser, draft.image_scene) == ("", "")
+
+
+def test_the_oldest_database_is_rebuilt_with_the_scene_column(tmp_path: Path) -> None:
+    """SA-49 AC5: the pre-SA-40 rebuild path also ends with the scene column."""
+    path = tmp_path / "humblebrag.db"
+    _old_database(path)
+    store = DraftStore(path)
+    assert _read_scenes(path) == [("",)] * len(OLD_ROWS)
+    assert store.get(1).image_scene == ""
+
+
+def test_migrating_twice_keeps_the_scene(pre_scene_db: Path) -> None:
+    """A second start changes nothing."""
+    DraftStore(pre_scene_db).apply_redo(1, "T2", "S2", "B2", None, "Kept", "Scene")
+    DraftStore(pre_scene_db)
+    assert _read_scenes(pre_scene_db) == [("Scene",)]
+
+
+def test_redo_replaces_the_scene(tmp_path: Path) -> None:
+    """SA-49 AC6: a redo stores the new scene in place of the old one."""
+    store = DraftStore(tmp_path / "d.db")
+    draft = store.create("seed", "T", "S", "B", image_scene="Old scene.")
+    redone = store.apply_redo(draft.id, "T2", "S2", "B2", None, "Tz", "New scene.")
+    assert redone.image_scene == "New scene."

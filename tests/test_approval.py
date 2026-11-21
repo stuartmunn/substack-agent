@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from substack.exceptions import SubstackAPIException
 
+from humblebrag import approval as approval_module
 from humblebrag.alerts import configure_alerts
 from humblebrag.approval import (
     FAILED_TEXT,
@@ -25,6 +26,7 @@ from humblebrag.approval import (
 from humblebrag.buttons import ACTIONS_KEY, ALREADY_HANDLED_TEXT
 from humblebrag.config import load_config
 from humblebrag.drafts import STATUS_HANDED_OVER, STATUS_PENDING, DraftStore
+from humblebrag.image_prompt import build_image_prompt
 from humblebrag.preview import ACTION_APPROVE
 from humblebrag.publisher import (
     DraftError,
@@ -127,8 +129,9 @@ class FakePublisher:
 class Harness:
     """Real store and queue, fake publisher and bot."""
 
-    def __init__(self, tmp_path: Path, teaser: str = "") -> None:
-        """One pending draft that holds the first seed, with ``teaser`` if given."""
+    def __init__(self, tmp_path: Path, teaser: str = "", scene: str = "") -> None:
+        """One pending draft that holds the first seed, with ``teaser`` and
+        image ``scene`` if given."""
         self.seed_path = tmp_path / "seed.md"
         self.seed_path.write_text(SEEDS)
         self.queue = SeedQueue(self.seed_path, lambda: TODAY)
@@ -143,7 +146,12 @@ class Harness:
         seed = self.queue.pick("1")
         assert seed is not None
         self.draft = self.store.create(
-            seed.text, "The Title", "The Sub", "# Body", note_teaser=teaser
+            seed.text,
+            "The Title",
+            "The Sub",
+            "# Body",
+            note_teaser=teaser,
+            image_scene=scene,
         )
 
     async def tap(self, message_id: int = 40) -> None:
@@ -176,6 +184,10 @@ def h(tmp_path: Path) -> Harness:
 
 
 TEASER = "I spilled a coffee and found leadership. I am humbled."
+
+
+SCENE = "Sir Humblebrag III ponders a spilled coffee in a grand library."
+PROMPT = build_image_prompt(SCENE)
 
 
 @pytest.fixture
@@ -703,3 +715,127 @@ async def test_the_sent_teaser_bookkeeping_is_kept_while_the_draft_is_pending(
     _break(monkeypatch, ht.store, "mark_handed_over")
     await ht.tap()
     assert ht.service._teaser_sent == {ht.draft.id}
+
+
+# SA-49: the Gemini image prompt arrives alone after the teaser
+
+
+@pytest.fixture
+def hp(tmp_path: Path) -> Harness:
+    """A harness whose draft has a Note teaser and an image scene."""
+    return Harness(tmp_path, teaser=TEASER, scene=SCENE)
+
+
+async def test_the_image_prompt_follows_the_teaser_alone(hp: Harness) -> None:
+    """SA-49 AC7/AC11: link, teaser, then the full prompt with the reply line."""
+    await hp.tap()
+    assert hp.bot.sent == [HANDED_OVER_TEXT.format(url=EDITOR), TEASER, PROMPT]
+    assert SCENE in PROMPT
+    assert PROMPT.endswith("Reply to this message with the image.")
+
+
+async def test_the_prompt_is_sent_when_the_draft_has_no_teaser(tmp_path: Path) -> None:
+    """The prompt does not depend on a teaser being present."""
+    only_scene = Harness(tmp_path, scene=SCENE)
+    await only_scene.tap()
+    assert only_scene.bot.sent == [HANDED_OVER_TEXT.format(url=EDITOR), PROMPT]
+
+
+async def test_an_older_draft_with_no_scene_sends_no_prompt(ht: Harness) -> None:
+    """SA-49 AC8: a draft with a teaser but no scene sends no prompt."""
+    await ht.tap()
+    assert ht.bot.sent == [HANDED_OVER_TEXT.format(url=EDITOR), TEASER]
+
+
+async def test_a_repeat_tap_does_not_resend_the_prompt(hp: Harness) -> None:
+    """SA-49 AC9/AC11: the second tap is refused as already handled."""
+    await hp.tap()
+    await hp.tap()
+    assert hp.bot.sent.count(PROMPT) == 1
+    assert hp.bot.sent[-1] == ALREADY_HANDLED_TEXT
+
+
+async def test_a_retry_after_a_bookkeeping_failure_does_not_resend_the_prompt(
+    hp: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-49 AC9: a still-pending draft retried must not repeat the prompt."""
+    _break(monkeypatch, hp.store, "mark_handed_over")
+    await hp.tap()
+    await hp.tap()
+    assert hp.stored().status == STATUS_PENDING
+    assert hp.bot.sent.count(PROMPT) == 1
+
+
+async def test_a_failed_prompt_send_alerts_and_keeps_the_approval(
+    hp: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-49 AC10/TST-04: alert Stuart; the handover is not rolled back."""
+    real = hp.bot.send_message
+
+    async def fail_on_prompt(**kwargs: Any) -> None:
+        if kwargs["text"] == PROMPT:
+            raise RuntimeError("telegram said no")
+        await real(**kwargs)
+
+    monkeypatch.setattr(hp.bot, "send_message", fail_on_prompt)
+    await hp.tap()
+    assert hp.bot.sent == [HANDED_OVER_TEXT.format(url=EDITOR), TEASER]
+    assert hp.stored().status == STATUS_HANDED_OVER
+    [alert_text] = alerts
+    assert "send image prompt" in alert_text
+    assert "telegram said no" in alert_text
+    assert EDITOR in alert_text
+
+
+async def test_a_failed_teaser_does_not_stop_the_prompt(
+    hp: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The two follow-ups are independent: the prompt still goes out."""
+    real = hp.bot.send_message
+
+    async def fail_on_teaser(**kwargs: Any) -> None:
+        if kwargs["text"] == TEASER:
+            raise RuntimeError("teaser failed")
+        await real(**kwargs)
+
+    monkeypatch.setattr(hp.bot, "send_message", fail_on_teaser)
+    await hp.tap()
+    assert hp.bot.sent == [HANDED_OVER_TEXT.format(url=EDITOR), PROMPT]
+    assert len(alerts) == 1
+
+
+async def test_a_missing_template_alerts_and_keeps_the_approval(
+    hp: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken template is a failure to send: alert, never roll back."""
+    _break(monkeypatch, approval_module, "build_image_prompt")
+    await hp.tap()
+    assert hp.stored().status == STATUS_HANDED_OVER
+    assert "send image prompt" in alerts[0]
+
+
+async def test_no_prompt_is_sent_when_the_substack_draft_was_not_created(
+    hp: Harness,
+) -> None:
+    """A failed create sends neither the teaser nor the prompt."""
+    hp.publisher.error = DraftError("substack is down")
+    await hp.tap()
+    assert PROMPT not in hp.bot.sent
+    assert TEASER not in hp.bot.sent
+
+
+async def test_the_sent_prompt_bookkeeping_is_cleared_once_handed_over(
+    hp: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MEM-01: cleared once handed over, kept while the draft is still pending."""
+    await hp.tap()
+    assert hp.service._image_prompt_sent == set()
+
+
+async def test_the_sent_prompt_bookkeeping_is_kept_while_pending(
+    hp: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After a failed status write the retry still needs the entry."""
+    _break(monkeypatch, hp.store, "mark_handed_over")
+    await hp.tap()
+    assert hp.service._image_prompt_sent == {hp.draft.id}

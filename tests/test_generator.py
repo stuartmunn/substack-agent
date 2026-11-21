@@ -32,6 +32,7 @@ ENV = {
 PERSONA = Persona(version=1, text="You are Sir Humblebrag.")
 SEED = "I spilled my coffee."
 STEER = "make it about trains"
+SCENE = "Sir Humblebrag III ponders a spilled coffee in a grand library."
 TEASER = "A cancelled train made me a locomotive of leadership. I am humbled."
 
 
@@ -66,6 +67,7 @@ def _reply(words: int = 300, **overrides: Any) -> str:
         "subtitle": "A humble reflection",
         "body_markdown": _body(words),
         "note_teaser": TEASER,
+        "image_scene": SCENE,
     }
     data.update(overrides)
     return json.dumps(data)
@@ -100,6 +102,7 @@ async def test_output_has_title_subtitle_body_and_teaser() -> None:
         subtitle="A humble reflection",
         body_markdown=_body(300),
         note_teaser=TEASER,
+        image_scene=SCENE,
     )
 
 
@@ -199,6 +202,7 @@ async def test_extra_keys_are_dropped_so_only_a_post_comes_out() -> None:
         "subtitle",
         "body_markdown",
         "note_teaser",
+        "image_scene",
     ]
 
 
@@ -363,3 +367,65 @@ async def test_the_output_budget_has_headroom_for_the_teaser() -> None:
     teaser_tokens = MAX_TEASER_CHARS  # a token is at least one character
     body_tokens = config.max_post_words * TOKENS_PER_WORD_ALLOWANCE
     assert client.calls[0]["max_tokens"] >= body_tokens + teaser_tokens
+
+
+# SA-49: the image scene
+
+BAD_SCENES: dict[str, Any] = {
+    "missing": None,
+    "empty": "   ",
+    "not a string": 7,
+    "too long": "S" * 301,
+    "link": "He reads https://example.com in a library.",
+    "markdown link": "He reads [a book](http://x.y) in a library.",
+    "image": "He stands before ![a pic](http://x.y/z.png) in a library.",
+}
+
+
+def _reply_with_scene(scene: Any) -> str:
+    """A reply whose image scene is ``scene`` (or missing if None)."""
+    data = json.loads(_reply())
+    if scene is None:
+        del data["image_scene"]
+    else:
+        data["image_scene"] = scene
+    return json.dumps(data)
+
+
+@pytest.mark.parametrize("scene", BAD_SCENES.values(), ids=BAD_SCENES.keys())
+async def test_a_bad_scene_is_retried_once_then_succeeds(scene: Any) -> None:
+    """SA-49 AC2: each rejection case takes the existing retry path."""
+    client = StubClient([_reply_with_scene(scene), _reply()])
+    post = await _generator(client).generate(SEED)
+    assert len(client.calls) == 2
+    assert "image_scene" in client.calls[1]["prompt"]
+    assert post.image_scene == SCENE
+
+
+@pytest.mark.parametrize("scene", BAD_SCENES.values(), ids=BAD_SCENES.keys())
+async def test_a_scene_that_fails_twice_raises_post_generation_error(
+    scene: Any,
+) -> None:
+    """SA-49 AC2: if the retry also fails, PostGenerationError is raised."""
+    client = StubClient([_reply_with_scene(scene)] * 2)
+    with pytest.raises(PostGenerationError):
+        await _generator(client).generate(SEED)
+
+
+@pytest.mark.parametrize("scene", ["Short.", "S" * 300, "He reads a book."])
+async def test_valid_scenes_are_accepted_and_stripped(scene: str) -> None:
+    """SA-49 AC1/AC2: up to 300 characters pass, with whitespace trimmed."""
+    post = await _generator(StubClient([_reply(image_scene=f" {scene}\n")])).generate(
+        SEED
+    )
+    assert post.image_scene == scene.strip()
+
+
+async def test_the_prompt_describes_the_scene_rules() -> None:
+    """SA-49 AC1: the format override asks for the field and its limits."""
+    client = StubClient([_reply()])
+    await _generator(client).generate(SEED)
+    prompt = client.calls[0]["prompt"]
+    assert '"image_scene"' in prompt
+    assert "300 characters" in prompt
+    assert "no real people, brands, logos or text" in prompt

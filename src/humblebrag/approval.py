@@ -8,8 +8,8 @@ failed create leaves the draft pending with its buttons active; once the
 Substack draft exists, a failure in any later step alerts with the draft ID and
 link and never hides the link. After the link, a draft's Note teaser is sent
 alone in its own message so Stuart can copy it; Stuart creates the Note by hand
-(the agent never touches Notes). A failed teaser send alerts and rolls nothing
-back.
+(the agent never touches Notes). After the teaser, the Gemini image prompt is
+sent the same way. A failed teaser or prompt send alerts and rolls nothing back.
 """
 
 import asyncio
@@ -22,6 +22,7 @@ from telegram.ext import Application, ContextTypes
 from humblebrag.alerts import alert, describe_error
 from humblebrag.buttons import ALREADY_HANDLED_TEXT, register_action
 from humblebrag.drafts import STATUS_PENDING, Draft, DraftStore
+from humblebrag.image_prompt import build_image_prompt
 from humblebrag.preview import ACTION_APPROVE
 from humblebrag.publisher import DraftError, SubstackError, SubstackPublisher
 from humblebrag.seed_queue import SeedQueue
@@ -36,6 +37,7 @@ STEP_STATUS = "save handed-over status"
 STEP_SEED = "mark seed used"
 STEP_REPLY = "send reply"
 STEP_TEASER = "send Note teaser"
+STEP_IMAGE_PROMPT = "send image prompt"
 IN_FLIGHT_TEXT = "Already handing this one to Substack, hold on."
 HANDED_OVER_TEXT = (
     "Draft ready in Substack. Open it, check it and publish it yourself: {url}"
@@ -60,6 +62,7 @@ class ApproveService:
         # Drafts whose teaser this process has sent while the store still says
         # pending, so a retry cannot send it twice; cleared once handed over.
         self._teaser_sent: set[int] = set()
+        self._image_prompt_sent: set[int] = set()
 
     async def on_approve_tap(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE, draft: Draft
@@ -105,6 +108,7 @@ class ApproveService:
             substack_id,
             new=known_id is None,
             teaser=draft.note_teaser,
+            image_scene=draft.image_scene,
         )
         await self._remove_buttons(update, context, chat_id)
 
@@ -163,9 +167,11 @@ class ApproveService:
         *,
         new: bool,
         teaser: str,
+        image_scene: str,
     ) -> None:
         """Save the ID (if new), mark the draft handed over, mark the seed used,
-        reply with the editor link, then send the Note teaser (if there is one).
+        reply with the editor link, then send the Note teaser and the image prompt
+        (each only if the draft has one).
 
         The Substack draft exists, so a bookkeeping failure alerts with the step,
         draft ID and link but never hides the link or skips the later steps.
@@ -201,8 +207,15 @@ class ApproveService:
                 STEP_TEASER,
                 self._send_teaser(context, chat_id, draft_id, teaser),
             )
-        if stored:
-            self._teaser_sent.discard(draft_id)  # the status now blocks a repeat
+        if image_scene and draft_id not in self._image_prompt_sent:
+            await self._step(
+                problems,
+                STEP_IMAGE_PROMPT,
+                self._send_image_prompt(context, chat_id, draft_id, image_scene),
+            )
+        if stored:  # the status now blocks a repeat
+            self._teaser_sent.discard(draft_id)
+            self._image_prompt_sent.discard(draft_id)
         if problems:
             await alert(
                 ALERT_EVENT,
@@ -220,6 +233,18 @@ class ApproveService:
         """Send the teaser alone, and remember it was sent."""
         await self._say(context, chat_id, teaser)
         self._teaser_sent.add(draft_id)
+
+    async def _send_image_prompt(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        chat_id: int,
+        draft_id: int,
+        image_scene: str,
+    ) -> None:
+        """Send the Gemini prompt alone, and remember it was sent."""
+        text = await asyncio.to_thread(build_image_prompt, image_scene)
+        await self._say(context, chat_id, text)
+        self._image_prompt_sent.add(draft_id)
 
     @staticmethod
     async def _step(problems: list[str], step: str, work: Awaitable[object]) -> bool:
