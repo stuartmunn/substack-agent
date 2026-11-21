@@ -20,6 +20,9 @@ VERDICT_FAIL = "fail"
 CHECK_WORDLIST = "wordlist"
 CHECK_CLASSIFIER = "classifier"
 ALERT_EVENT = "guard"
+REPLY_ALERT_EVENT = "reply guard"
+POST_SUBJECT = "draft"
+REPLY_SUBJECT = "reply"
 PASS_ICON = "🛡️"
 FAIL_ICON = "🚫"
 _WORD = re.compile(r"[a-z]+")
@@ -233,8 +236,13 @@ async def _generate_until_safe[Item](
     generate: Callable[[str | None], Awaitable[Item]],
     check: Callable[[Item], Awaitable[GuardResult]],
     steer: str | None,
+    event: str = ALERT_EVENT,
+    subject: str = POST_SUBJECT,
 ) -> tuple[Item, GuardResult]:
     """Generate an item that passes ``check``, regenerating on a failure.
+
+    ``event`` and ``subject`` name the feature in logs and alerts, so Stuart can
+    tell a failed daily draft from a failed /reply.
 
     A failing item is regenerated up to ``MAX_GUARD_REGENERATIONS`` times
     (these do not count against Redo). If every item fails, Stuart is alerted
@@ -248,14 +256,16 @@ async def _generate_until_safe[Item](
         try:
             result = await check(item)
         except GuardError as error:
-            await alert(ALERT_EVENT, f"Safety guard could not judge a draft: {error}")
+            await alert(event, f"Safety guard could not judge a {subject}: {error}")
             raise
         if result.passed:
             return item, result
-        logger.warning("Guard failed draft %d (%s)", attempt + 1, result.check)
+        logger.warning("Guard failed %s %d (%s)", subject, attempt + 1, result.check)
         current_steer = _steer_with_reason(steer, result.reason)
     assert result is not None
-    await alert(ALERT_EVENT, f"Draft failed the safety guard: {result.reason}")
+    await alert(
+        event, f"{subject.capitalize()} failed the safety guard: {result.reason}"
+    )
     raise GuardRejectedError(result.reason)
 
 
@@ -286,4 +296,6 @@ async def generate_checked_reply[Item](
     async def check(item: Item) -> GuardResult:
         return await guard.check_reply(reply_text(item))
 
-    return await _generate_until_safe(generate, check, steer)
+    return await _generate_until_safe(
+        generate, check, steer, REPLY_ALERT_EVENT, REPLY_SUBJECT
+    )

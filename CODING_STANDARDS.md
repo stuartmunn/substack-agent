@@ -112,3 +112,4 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [ERR-24] Blocking calls with no native timeout (DNS lookups) run in a worker and are bounded by the remaining overall deadline, with a cap on stuck workers so a stalling host cannot leak threads (from PR #41, 2026-11-21)
 - [GEN-09] A default that exists in config is imported from there, not repeated as a second literal in the module that uses it (from PR #41, 2026-11-21)
 - [GEN-10] Handler patterns that must not overlap are defined together from one set of constants, never derived by slicing another pattern, and a test proves they partition the inputs (from PR #42, 2026-11-21)
+- [ERR-25] Failure paths shared by several features take the feature name, so logs and alerts say which one failed (from PR #42, 2026-11-21)

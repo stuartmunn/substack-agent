@@ -13,6 +13,7 @@ from humblebrag.fetcher import TargetType
 from humblebrag.guard import (
     MAX_GUARD_REGENERATIONS,
     NEUTRALISED_TAG,
+    REPLY_ALERT_EVENT,
     REPLY_CLASSIFIER_SYSTEM,
     GuardError,
     GuardRejectedError,
@@ -422,6 +423,8 @@ async def test_every_attempt_failing_alerts_and_raises(alerts: list[str]) -> Non
         )
     assert len(alerts) == 1
     assert "names the author" in alerts[0]
+    assert alerts[0].startswith(f"⚠️ {REPLY_ALERT_EVENT}: Reply failed")
+    assert "draft" not in alerts[0].lower()
 
 
 async def test_an_unusable_classifier_reply_fails_closed_and_alerts(
@@ -431,6 +434,8 @@ async def test_an_unusable_classifier_reply_fails_closed_and_alerts(
     with pytest.raises(GuardError):
         await _run(["Nice."], ["not json"])
     assert len(alerts) == 1
+    assert alerts[0].startswith(f"⚠️ {REPLY_ALERT_EVENT}: Safety guard could not")
+    assert "judge a reply" in alerts[0]
 
 
 async def test_reply_text_cannot_close_the_classifier_delimiter() -> None:
