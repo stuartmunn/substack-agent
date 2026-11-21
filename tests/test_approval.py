@@ -119,7 +119,7 @@ class FakePublisher:
 
     def __getattr__(self, name: str) -> Any:
         """Any publish-like call is a test failure."""
-        if "publish" in name:
+        if "publish" in name or "note" in name:
             raise AssertionError(f"the agent must never call {name}")
         raise AttributeError(name)
 
@@ -127,8 +127,8 @@ class FakePublisher:
 class Harness:
     """Real store and queue, fake publisher and bot."""
 
-    def __init__(self, tmp_path: Path) -> None:
-        """One pending draft that holds the first seed."""
+    def __init__(self, tmp_path: Path, teaser: str = "") -> None:
+        """One pending draft that holds the first seed, with ``teaser`` if given."""
         self.seed_path = tmp_path / "seed.md"
         self.seed_path.write_text(SEEDS)
         self.queue = SeedQueue(self.seed_path, lambda: TODAY)
@@ -142,7 +142,9 @@ class Harness:
         )
         seed = self.queue.pick("1")
         assert seed is not None
-        self.draft = self.store.create(seed.text, "The Title", "The Sub", "# Body")
+        self.draft = self.store.create(
+            seed.text, "The Title", "The Sub", "# Body", note_teaser=teaser
+        )
 
     async def tap(self, message_id: int = 40) -> None:
         """Tap Approve on the draft's message."""
@@ -171,6 +173,15 @@ class Harness:
 def h(tmp_path: Path) -> Harness:
     """A fresh harness."""
     return Harness(tmp_path)
+
+
+TEASER = "I spilled a coffee and found leadership. I am humbled."
+
+
+@pytest.fixture
+def ht(tmp_path: Path) -> Harness:
+    """A harness whose draft has a Note teaser."""
+    return Harness(tmp_path, teaser=TEASER)
 
 
 def _break(monkeypatch: pytest.MonkeyPatch, target: object, name: str) -> None:
@@ -584,3 +595,111 @@ def test_install_registers_the_approve_action() -> None:
     service = SimpleNamespace(on_approve_tap=lambda *a: None)
     install_approve(application, service)  # type: ignore[arg-type]
     assert ACTION_APPROVE in application.bot_data[ACTIONS_KEY]
+
+
+# SA-48: the Note teaser arrives alone after the link
+
+
+async def test_the_teaser_follows_the_link_alone_in_its_own_message(
+    ht: Harness,
+) -> None:
+    """SA-48 AC3/AC10: link first, then the teaser by itself, nothing else in it."""
+    await ht.tap()
+    assert ht.bot.sent == [HANDED_OVER_TEXT.format(url=EDITOR), TEASER]
+
+
+async def test_a_draft_without_a_teaser_sends_no_teaser_message(h: Harness) -> None:
+    """SA-48 AC6: an older draft with an empty teaser approves as before."""
+    await h.tap()
+    assert h.bot.sent == [HANDED_OVER_TEXT.format(url=EDITOR)]
+    assert h.stored().status == STATUS_HANDED_OVER
+
+
+async def test_a_failed_teaser_send_alerts_and_keeps_the_approval(
+    ht: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-48 AC4/TST-04: Stuart is alerted; the handover is not rolled back."""
+    real = ht.bot.send_message
+
+    async def fail_on_teaser(**kwargs: Any) -> None:
+        if kwargs["text"] == TEASER:
+            raise RuntimeError("telegram said no")
+        await real(**kwargs)
+
+    monkeypatch.setattr(ht.bot, "send_message", fail_on_teaser)
+    await ht.tap()
+    assert ht.bot.sent == [HANDED_OVER_TEXT.format(url=EDITOR)]
+    assert ht.stored().status == STATUS_HANDED_OVER
+    assert ht.seed_used()
+    [alert_text] = alerts
+    assert "send Note teaser" in alert_text
+    assert "telegram said no" in alert_text
+    assert EDITOR in alert_text
+
+
+async def test_no_teaser_is_sent_when_the_substack_draft_was_not_created(
+    ht: Harness,
+) -> None:
+    """SA-48 AC5: a failed create sends only the failure message."""
+    ht.publisher.error = DraftError("substack is down")
+    await ht.tap()
+    assert TEASER not in ht.bot.sent
+    assert ht.stored().status == STATUS_PENDING
+
+
+async def test_a_repeat_tap_on_a_handed_over_draft_does_not_resend_the_teaser(
+    ht: Harness,
+) -> None:
+    """SA-48 AC7: the second tap is refused as already handled."""
+    await ht.tap()
+    await ht.tap()
+    assert ht.bot.sent.count(TEASER) == 1
+    assert ht.bot.sent[-1] == ALREADY_HANDLED_TEXT
+
+
+async def test_a_retry_after_a_bookkeeping_failure_does_not_resend_the_teaser(
+    ht: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SA-48 AC7 risk: the draft is still pending after a failed status write,
+    so the retry must not send the teaser a second time."""
+    _break(monkeypatch, ht.store, "mark_handed_over")
+    await ht.tap()
+    await ht.tap()
+    assert ht.stored().status == STATUS_PENDING
+    assert ht.bot.sent.count(TEASER) == 1
+
+
+async def test_the_teaser_is_sent_even_if_the_link_reply_failed(
+    ht: Harness, alerts: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The teaser does not depend on the link message; the link failure alerts."""
+    real = ht.bot.send_message
+
+    async def fail_on_link(**kwargs: Any) -> None:
+        if kwargs["text"] == HANDED_OVER_TEXT.format(url=EDITOR):
+            raise RuntimeError("link send failed")
+        await real(**kwargs)
+
+    monkeypatch.setattr(ht.bot, "send_message", fail_on_link)
+    await ht.tap()
+    assert ht.bot.sent == [TEASER]
+    assert len(alerts) == 1
+    assert "send reply" in alerts[0]
+
+
+async def test_the_sent_teaser_bookkeeping_is_cleared_once_handed_over(
+    ht: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR-Agent: the in-memory set only holds drafts the store still has pending."""
+    await ht.tap()
+    assert ht.service._teaser_sent == set()
+    assert ht.service._created == {}
+
+
+async def test_the_sent_teaser_bookkeeping_is_kept_while_the_draft_is_pending(
+    ht: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The entry stays after a failed status write, which is when a retry needs it."""
+    _break(monkeypatch, ht.store, "mark_handed_over")
+    await ht.tap()
+    assert ht.service._teaser_sent == {ht.draft.id}

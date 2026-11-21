@@ -21,6 +21,7 @@ BUTTON_LABELS = {
 }
 CALLBACK_SEPARATOR = ":"
 NO_GUARD_RESULT = "Guard: no result recorded"
+TEASER_LABEL = "Note teaser:"
 _ACTIONS_BY_CODE = {code: action for action, code in ACTION_CODES.items()}
 _SPLIT_SEPARATORS = ("\n", " ")
 
@@ -93,9 +94,11 @@ def _cut_point(text: str, limit: int) -> int:
 
 
 def format_preview(draft: Draft, guard_line: str | None) -> list[str]:
-    """The preview as message texts: title, subtitle, body, then seed, redo
-    count and guard result together at the end."""
+    """The preview as message texts: title, subtitle, body, the Note teaser (if
+    the draft has one), then seed, redo count and guard result at the end."""
     main = f"{draft.title}\n{draft.subtitle}\n\n{draft.body}"
+    if draft.note_teaser:
+        main = f"{main}\n\n{TEASER_LABEL}\n{draft.note_teaser}"
     footer = (
         f"Seed: {draft.seed}\nRedo count: {draft.redo_count}\n"
         f"{guard_line or NO_GUARD_RESULT}"

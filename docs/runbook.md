@@ -136,6 +136,13 @@ The agent only ever creates (and updates) Substack **drafts**. When you tap
 the editor link. You read it there and press Publish yourself. Nothing is
 published, and nothing reaches Substack even as a draft, without your Approve.
 
+Each preview also shows a short **Note teaser** after the post. After Approve,
+the link arrives first and the teaser follows as a message of its own, so you
+can copy it. The agent never posts to Substack Notes: you create the Note by
+hand and attach the post. Older drafts with no teaser send no teaser message. If
+the teaser message fails to send, you get an alert; the Substack draft is
+unaffected.
+
 The agent used to try to publish too, but Substack's publish call answered
 `403` while draft creation worked. Why is still unknown; it is being looked
 into in [SA-42](https://stuartmunn.atlassian.net/browse/SA-42). Until that is
