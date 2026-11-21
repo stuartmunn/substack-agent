@@ -152,6 +152,26 @@ repo). The prompt template is `prompts/image_prompt.md`. Older drafts with no
 scene send no prompt. A failed send alerts you; the Substack draft is
 unaffected.
 
+### Adding the image to the draft
+
+When you have the picture, **reply to the image prompt message** with it.
+Send it **as a file** (the paperclip, then File), not as a photo: Telegram
+compresses photos, a file keeps the full quality. JPEG, PNG and WebP up to
+10 MB are accepted. The bot uploads it to Substack and puts it at the top of the
+draft's body, then replies "Image added" with the editor link. The title,
+subtitle and the rest of the body are not touched. Reply with another image and
+it replaces the first, so there is only ever one.
+
+- An image that is not a reply to an image prompt is not used: the bot tells you
+  how to do it. It never guesses which draft you mean.
+- If the Substack draft was published by hand, scheduled or deleted, the bot says
+  it cannot add the image and changes nothing.
+- A wrong file type, a file over 10 MB, or any upload or edit failure (including
+  an expired Substack cookie, see
+  [refresh the Substack cookie](#refresh-the-substack-cookie)) gets a clear
+  reply, and a failure also alerts you. The draft is left as it was.
+- Only your chat is served. The agent still never publishes.
+
 The agent used to try to publish too, but Substack's publish call answered
 `403` while draft creation worked. Why is still unknown; it is being looked
 into in [SA-42](https://stuartmunn.atlassian.net/browse/SA-42). Until that is

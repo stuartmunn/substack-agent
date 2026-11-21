@@ -613,3 +613,32 @@ def test_redo_replaces_the_scene(tmp_path: Path) -> None:
     draft = store.create("seed", "T", "S", "B", image_scene="Old scene.")
     redone = store.apply_redo(draft.id, "T2", "S2", "B2", None, "Tz", "New scene.")
     assert redone.image_scene == "New scene."
+
+
+# SA-50: the image_prompt_message_id column
+
+
+def test_the_prompt_message_is_found_by_its_id(tmp_path: Path) -> None:
+    """SA-50: a reply's message id finds the draft; an unknown id finds none."""
+    store = DraftStore(tmp_path / "d.db")
+    draft = store.create("seed", "T", "S", "B")
+    assert store.get(draft.id).image_prompt_message_id == ""
+    store.set_image_prompt_message_id(draft.id, 77)
+    assert store.find_by_image_prompt_message(77).id == draft.id
+    assert store.find_by_image_prompt_message(78) is None
+
+
+def test_setting_the_prompt_message_of_a_missing_draft_raises(tmp_path: Path) -> None:
+    """SA-50: a documented error, not a silent no-op."""
+    with pytest.raises(DraftNotFoundError):
+        DraftStore(tmp_path / "d.db").set_image_prompt_message_id(99, 1)
+
+
+def test_a_pre_sa50_database_gains_the_column(pre_scene_db: Path) -> None:
+    """SA-50: an existing database gains the column with an empty default."""
+    connection = sqlite3.connect(pre_scene_db)
+    connection.execute("ALTER TABLE drafts DROP COLUMN image_prompt_message_id")
+    connection.commit()
+    connection.close()
+    draft = DraftStore(pre_scene_db).get(1)
+    assert (draft.note_teaser, draft.image_prompt_message_id) == ("Teaser", "")

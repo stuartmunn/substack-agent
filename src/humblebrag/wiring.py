@@ -26,6 +26,7 @@ from humblebrag.config import Config
 from humblebrag.drafts import Draft, DraftStore, RunGate
 from humblebrag.generator import PostGenerator
 from humblebrag.guard import CheckedPost, SafetyGuard, generate_checked
+from humblebrag.image_reply import ImageReplyService, install_image_reply
 from humblebrag.persona import load_persona
 from humblebrag.pipeline import RunPipeline
 from humblebrag.preview import send_preview
@@ -84,6 +85,9 @@ class Runtime:
         install_redo(application, RedoService(store, generate))
         install_bin(application, BinService(store, queue))
         install_approve(application, ApproveService(store, queue, self.publisher))
+        install_image_reply(
+            application, ImageReplyService(store, self.publisher, chat_id)
+        )
         self.pipeline = RunPipeline(
             gate=RunGate(
                 store,

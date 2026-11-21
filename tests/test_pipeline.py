@@ -118,11 +118,12 @@ class FakeBot:
         self.messages: list[dict[str, Any]] = []
         self.fail_send = False
 
-    async def send_message(self, **kwargs: Any) -> None:
-        """Record a message, or fail."""
+    async def send_message(self, **kwargs: Any) -> SimpleNamespace:
+        """Record a message and give it an id, or fail."""
         if self.fail_send:
             raise RuntimeError("telegram down")
         self.messages.append(kwargs)
+        return SimpleNamespace(message_id=len(self.messages))
 
     async def edit_message_reply_markup(self, **_kwargs: Any) -> None:
         """Accept a button removal."""
