@@ -15,7 +15,14 @@ MAX_ATTEMPTS = 2
 MIN_GENERATION_TOKENS = 4096
 TOKENS_PER_WORD_ALLOWANCE = 3
 JSON_OVERHEAD_TOKENS = 512
-REQUIRED_FIELDS = ("title", "subtitle", "body_markdown")
+REQUIRED_FIELDS = ("title", "subtitle", "body_markdown", "note_teaser")
+MAX_TEASER_CHARS = 280
+MAX_TEASER_SENTENCES = 2
+MIN_COPIED_WORDS = 4
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])[\"')\]]*\s+")
+_HASHTAG = re.compile(r"(?:^|\s)#\w")
+_SIGN_OFF = re.compile(r"\bagree\s*\?", re.IGNORECASE)
+_NON_WORD = re.compile(r"[\W_]+")
 _LINK = re.compile(
     r"\[[^\]]*\]\([^)]*\)|^\s*\[[^\]]+\]:\s*\S+\s*(?:[\"'(].*)?$|https?://|www\.|<a\b",
     re.IGNORECASE | re.MULTILINE,
@@ -33,11 +40,13 @@ class MalformedPostError(ValueError):
 
 @dataclass(frozen=True)
 class GeneratedPost:
-    """A generated Substack post. Posts only: no Notes, no cover image."""
+    """A generated Substack post and its Note teaser (text only, never posted
+    by the agent). No cover image."""
 
     title: str
     subtitle: str
     body_markdown: str
+    note_teaser: str
 
 
 def _build_prompt(
@@ -53,9 +62,13 @@ def _build_prompt(
     parts.append(
         "Format override (this replaces the persona's Format section on "
         "length and title placement): reply with ONLY a JSON object with the "
-        'string keys "title", "subtitle" and "body_markdown". '
+        'string keys "title", "subtitle", "body_markdown" and "note_teaser". '
         f"body_markdown must be between {min_words} and {max_words} words, "
-        "must not repeat the title, and must contain no links and no images."
+        "must not repeat the title, and must contain no links and no images. "
+        f"note_teaser is a witty teaser for the post: at most "
+        f"{MAX_TEASER_SENTENCES} sentences and {MAX_TEASER_CHARS} characters, "
+        "in your voice, in your own words (never a sentence copied from the "
+        'body), with no links, no images, no hashtags and no "Agree?" sign-off.'
     )
     if problem:
         parts.append(f"Your previous reply was rejected: {problem}. Fix it.")
@@ -66,6 +79,44 @@ def _repeats_title(body: str, title: str) -> bool:
     """True if the body's first line is just the title (optionally a heading)."""
     first_line = body.lstrip().split("\n", 1)[0].lstrip("#").strip()
     return first_line.casefold() == title.casefold()
+
+
+def _normalise(text: str) -> str:
+    """Lower-case ``text`` and collapse punctuation and spacing, for comparing."""
+    return _NON_WORD.sub(" ", text.casefold()).strip()
+
+
+def _copies_body(teaser: str, body: str) -> bool:
+    """True if a sentence of the teaser (of MIN_COPIED_WORDS or more) is in the body."""
+    flat_body = f" {_normalise(body)} "
+    for sentence in _SENTENCE_BREAK.split(teaser):
+        words = _normalise(sentence)
+        if len(words.split()) >= MIN_COPIED_WORDS and f" {words} " in flat_body:
+            return True
+    return False
+
+
+def _check_teaser(teaser: str, body: str) -> None:
+    """Raise MalformedPostError unless ``teaser`` meets the teaser rules."""
+    if len(teaser) > MAX_TEASER_CHARS:
+        raise MalformedPostError(
+            f"note_teaser has {len(teaser)} characters, expected at most "
+            f"{MAX_TEASER_CHARS}"
+        )
+    if len(_SENTENCE_BREAK.split(teaser)) > MAX_TEASER_SENTENCES:
+        raise MalformedPostError(
+            f"note_teaser has more than {MAX_TEASER_SENTENCES} sentences"
+        )
+    if _IMAGE.search(teaser):
+        raise MalformedPostError("note_teaser contains an image")
+    if _LINK.search(teaser):
+        raise MalformedPostError("note_teaser contains a link")
+    if _HASHTAG.search(teaser):
+        raise MalformedPostError("note_teaser contains a hashtag")
+    if _SIGN_OFF.search(teaser):
+        raise MalformedPostError('note_teaser ends with an "Agree?" sign-off')
+    if _copies_body(teaser, body):
+        raise MalformedPostError("note_teaser copies a sentence from the body")
 
 
 def _parse_post(reply: str, min_words: int, max_words: int) -> GeneratedPost:
@@ -92,6 +143,7 @@ def _parse_post(reply: str, min_words: int, max_words: int) -> GeneratedPost:
         raise MalformedPostError(
             f"body_markdown has {word_count} words, expected {min_words} to {max_words}"
         )
+    _check_teaser(values["note_teaser"], body)
     return GeneratedPost(**values)
 
 

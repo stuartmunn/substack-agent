@@ -31,6 +31,7 @@ SUMMARY_TITLE_CHARS = 60
 DRAFTS_TABLE = "drafts"
 REBUILT_TABLE = "drafts_new"
 NEW_COLUMN = "substack_draft_id"
+TEASER_COLUMN = "note_teaser"
 _TABLE_BODY = f"""(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     seed TEXT NOT NULL,
@@ -45,7 +46,8 @@ _TABLE_BODY = f"""(
     created_at TEXT NOT NULL,
     resolved_at TEXT,
     substack_url TEXT,
-    {NEW_COLUMN} TEXT
+    {NEW_COLUMN} TEXT,
+    {TEASER_COLUMN} TEXT NOT NULL DEFAULT ''
 )"""
 SCHEMA = f"CREATE TABLE {DRAFTS_TABLE} {_TABLE_BODY}"
 _OLD_COLUMN_LIST = (
@@ -68,9 +70,12 @@ _REBUILD_STEPS = (
     ("drop the old table", f"DROP TABLE {DRAFTS_TABLE}"),
     ("rename the new table", f"ALTER TABLE {REBUILT_TABLE} RENAME TO {DRAFTS_TABLE}"),
 )
+_ADD_TEASER_SQL = (
+    f"ALTER TABLE {DRAFTS_TABLE} ADD COLUMN {TEASER_COLUMN} TEXT NOT NULL DEFAULT ''"
+)
 _COLUMNS = (
     "id, seed, title, subtitle, body, steer_history, redo_count, status, "
-    "created_at, resolved_at, substack_url, substack_draft_id"
+    "created_at, resolved_at, substack_url, substack_draft_id, note_teaser"
 )
 
 
@@ -124,6 +129,7 @@ class Draft:
     resolved_at: datetime | None
     substack_url: str | None
     substack_draft_id: str | None = None
+    note_teaser: str = ""
 
 
 def _to_draft(row: tuple) -> Draft:
@@ -142,6 +148,7 @@ def _to_draft(row: tuple) -> Draft:
         resolved_at=None if resolved is None else datetime.fromisoformat(resolved),
         substack_url=row[10],
         substack_draft_id=row[11],
+        note_teaser=row[12],
     )
 
 
@@ -175,6 +182,7 @@ class DraftStore:
         body: str,
         steer: str | None = None,
         max_pending: int | None = None,
+        note_teaser: str = "",
     ) -> Draft:
         """Store a new pending draft (steer, if any, starts the steer history).
 
@@ -186,10 +194,21 @@ class DraftStore:
         created = self._clock().isoformat()
         cap = max_pending if max_pending is not None else UNLIMITED_PENDING
         cursor = self._execute(
-            "INSERT INTO drafts (seed, title, subtitle, body, steer_history, created_at)"
-            " SELECT ?, ?, ?, ?, ?, ?"
+            "INSERT INTO drafts"
+            " (seed, title, subtitle, body, steer_history, created_at, note_teaser)"
+            " SELECT ?, ?, ?, ?, ?, ?, ?"
             " WHERE (SELECT COUNT(*) FROM drafts WHERE status = ?) < ?",
-            (seed, title, subtitle, body, history, created, STATUS_PENDING, cap),
+            (
+                seed,
+                title,
+                subtitle,
+                body,
+                history,
+                created,
+                note_teaser,
+                STATUS_PENDING,
+                cap,
+            ),
         )
         if cursor.rowcount == 0:
             raise PendingCapReachedError(f"{cap} drafts are already pending")
@@ -258,8 +277,10 @@ class DraftStore:
         subtitle: str,
         body: str,
         steer: str | None,
+        note_teaser: str = "",
     ) -> Draft:
-        """Replace a pending draft's content, count the redo and log the steer.
+        """Replace a pending draft's content (teaser included), count the redo
+        and log the steer.
 
         One transaction checks the draft is pending and has redos left, so two
         racing redos cannot exceed ``MAX_REDOS``. Raises DraftNotFoundError,
@@ -282,8 +303,9 @@ class DraftStore:
                 history = json.loads(raw_history) + ([steer] if steer else [])
                 connection.execute(
                     "UPDATE drafts SET title = ?, subtitle = ?, body = ?,"
-                    " redo_count = redo_count + 1, steer_history = ? WHERE id = ?",
-                    (title, subtitle, body, json.dumps(history), draft_id),
+                    " note_teaser = ?, redo_count = redo_count + 1,"
+                    " steer_history = ? WHERE id = ?",
+                    (title, subtitle, body, note_teaser, json.dumps(history), draft_id),
                 )
                 connection.commit()
         except sqlite3.Error as error:
@@ -350,7 +372,8 @@ class DraftStore:
 
     @staticmethod
     def _create_or_rebuild(connection: sqlite3.Connection) -> None:
-        """Create a missing table; rebuild one that lacks the new column.
+        """Create a missing table; rebuild one that lacks the Substack draft ID
+        column; add the teaser column to one that only lacks that.
 
         Checked again inside the transaction: another process may have
         migrated between the unlocked check and BEGIN.
@@ -360,6 +383,8 @@ class DraftStore:
             _run_step(connection, "create the drafts table", SCHEMA)
         elif NEW_COLUMN not in columns:
             _rebuild(connection)
+        elif TEASER_COLUMN not in columns:
+            _run_step(connection, "add the note teaser column", _ADD_TEASER_SQL)
 
     def _query(self, sql: str, params: tuple = ()) -> list[tuple]:
         """Run a read-only statement and return its rows."""
@@ -404,7 +429,8 @@ def _table_columns(connection: sqlite3.Connection) -> list[str]:
 
 def _is_current(connection: sqlite3.Connection) -> bool:
     """True if the drafts table already has the new schema."""
-    return NEW_COLUMN in _table_columns(connection)
+    columns = _table_columns(connection)
+    return NEW_COLUMN in columns and TEASER_COLUMN in columns
 
 
 def _count_rows(connection: sqlite3.Connection, step: str, table: str) -> int:

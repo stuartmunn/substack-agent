@@ -1,4 +1,4 @@
-"""Tests for the handed_over status and Substack draft ID (SA-40)."""
+"""Tests for the handed_over status, Substack draft ID (SA-40) and Note teaser column (SA-47)."""
 
 import sqlite3
 from datetime import UTC, datetime
@@ -466,3 +466,73 @@ def test_the_backup_of_a_database_migrated_from_the_old_schema(
     DraftStore(data_dir / DB_FILENAME)
     folder = BackupService(data_dir).back_up(datetime(2026, 11, 19).date())
     assert DraftStore(folder / DB_FILENAME).get(2).substack_url == "https://x/p/two"
+
+
+# SA-47: the note_teaser column
+
+
+@pytest.fixture
+def pre_teaser_db(tmp_path: Path) -> Path:
+    """A database as SA-40 left it: it has substack_draft_id but no note_teaser."""
+    path = tmp_path / "humblebrag.db"
+    DraftStore(path).create("seed", "T", "S", "B")
+    connection = sqlite3.connect(path)
+    connection.execute("ALTER TABLE drafts DROP COLUMN note_teaser")
+    connection.commit()
+    connection.close()
+    return path
+
+
+def test_a_fresh_database_has_the_teaser_column(tmp_path: Path) -> None:
+    """SA-47 AC6: a new database has the column, defaulting to an empty string."""
+    store = DraftStore(tmp_path / "d.db")
+    draft = store.create("seed", "T", "S", "B")
+    assert draft.note_teaser == ""
+
+
+def test_the_teaser_is_stored_with_a_new_draft(tmp_path: Path) -> None:
+    """SA-47 AC1/AC6: the teaser given at creation is stored and loaded."""
+    store = DraftStore(tmp_path / "d.db")
+    draft = store.create("seed", "T", "S", "B", note_teaser="Humbled by coffee.")
+    assert store.get(draft.id).note_teaser == "Humbled by coffee."
+
+
+def test_a_pre_teaser_database_gains_the_column_and_keeps_its_rows(
+    pre_teaser_db: Path,
+) -> None:
+    """SA-47 AC6: existing rows get an empty teaser and still load."""
+    assert "note_teaser" not in str(_read(pre_teaser_db, "PRAGMA table_info(drafts)"))
+    store = DraftStore(pre_teaser_db)
+    assert _read(pre_teaser_db, "SELECT note_teaser FROM drafts") == [("",)]
+    draft = store.get(1)
+    assert (draft.title, draft.note_teaser) == ("T", "")
+    assert store.create("seed 2", "T2", "S2", "B2").id == 2
+
+
+def test_the_oldest_database_is_rebuilt_with_both_new_columns(tmp_path: Path) -> None:
+    """SA-47 AC6: a pre-SA-40 database ends with both columns and every row intact."""
+    path = tmp_path / "humblebrag.db"
+    _old_database(path)
+    before = _read(path, ROW_SQL.format(cols=OLD_COLUMNS))
+    store = DraftStore(path)
+    assert _read(path, ROW_SQL.format(cols=OLD_COLUMNS)) == before
+    assert _read(path, "SELECT note_teaser FROM drafts") == [("",)] * len(OLD_ROWS)
+    assert store.get(1).note_teaser == ""
+
+
+def test_migrating_twice_changes_nothing(pre_teaser_db: Path) -> None:
+    """SA-47 AC6: a second start-up leaves the migrated database alone."""
+    DraftStore(pre_teaser_db).apply_redo(1, "T2", "S2", "B2", None, "Kept")
+    DraftStore(pre_teaser_db)
+    assert _read(pre_teaser_db, "SELECT note_teaser FROM drafts") == [("Kept",)]
+
+
+def test_redo_replaces_the_teaser(tmp_path: Path) -> None:
+    """SA-47 AC7: a redo stores the new teaser in place of the old one."""
+    store = DraftStore(tmp_path / "d.db")
+    draft = store.create("seed", "T", "S", "B", note_teaser="Old teaser.")
+    redone = store.apply_redo(draft.id, "T2", "S2", "B2", "more trains", "New teaser.")
+    assert redone.note_teaser == "New teaser."
+    assert store.apply_redo(draft.id, "T3", "S3", "B3", None, "Third.").note_teaser == (
+        "Third."
+    )

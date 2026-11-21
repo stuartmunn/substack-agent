@@ -89,7 +89,9 @@ class Regenerator:
             await self.gate.wait()
         if self.error is not None:
             raise self.error
-        post = GeneratedPost(f"New title {len(self.calls)}", "New sub", "New body")
+        post = GeneratedPost(
+            f"New title {len(self.calls)}", "New sub", "New body", "New teaser"
+        )
         return CheckedPost(post, GUARD)
 
 
@@ -140,7 +142,9 @@ class Harness:
         self.service = RedoService(
             self.store, self.regen, STEER_TIMEOUT_SECONDS, self.clock.sleep
         )
-        self.draft = self.store.create("Spilled coffee", "Old", "Old sub", "Old body")
+        self.draft = self.store.create(
+            "Spilled coffee", "Old", "Old sub", "Old body", note_teaser="Old teaser"
+        )
 
     async def tap(self, draft: Draft | None = None, message_id: int = 50) -> None:
         """Tap Redo on the draft."""
@@ -182,6 +186,22 @@ async def test_tapping_redo_asks_for_a_steer(h: Harness) -> None:
 
 
 # AC2: a reply regenerates from the same seed with that steer
+
+
+@pytest.mark.parametrize("steer", ["more trains", None])
+async def test_redo_replaces_the_stored_teaser_with_the_new_one(
+    h: Harness, steer: str | None
+) -> None:
+    """SA-47 AC7: with or without a steer, the redo's teaser replaces the old one."""
+    before = h.store.get(h.draft.id).note_teaser
+    await h.tap()
+    if steer is None:
+        await h.nosteer()
+    else:
+        await h.reply(steer)
+    await h.settled()
+    after = h.store.get(h.draft.id).note_teaser
+    assert (before, after) == ("Old teaser", "New teaser")
 
 
 async def test_reply_regenerates_from_the_same_seed_with_the_steer(h: Harness) -> None:
