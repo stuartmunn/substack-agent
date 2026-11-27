@@ -74,6 +74,15 @@ class ClaudeClient:
             Flow.GUARD: config.guard_max_tokens,
             Flow.SEED: config.seed_max_tokens,
         }
+        for flow, limit in self._limits.items():
+            if limit > self._ceiling:
+                logger.warning(
+                    "Claude %s max_tokens (%d) exceeds CLAUDE_MAX_TOKENS_CEILING "
+                    "(%d); the ceiling applies",
+                    flow,
+                    limit,
+                    self._ceiling,
+                )
         self._client = anthropic.AsyncAnthropic(
             api_key=config.anthropic_api_key,
             max_retries=MAX_RETRIES,

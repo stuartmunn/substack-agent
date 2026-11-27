@@ -352,6 +352,18 @@ async def test_the_retry_is_capped_by_the_ceiling(sleeps: list[float]) -> None:
     assert _sent_limits(recorder) == [1500, 2000]
 
 
+async def test_a_limit_above_the_ceiling_is_warned_about(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A configured limit that the ceiling silently lowers is logged at start-up."""
+    config = load_config(
+        {**ENV, "REPLY_MAX_TOKENS": "3000", "CLAUDE_MAX_TOKENS_CEILING": "2000"}
+    )
+    with caplog.at_level("WARNING"):
+        _client(config, Recorder([]))
+    assert "exceeds CLAUDE_MAX_TOKENS_CEILING" in caplog.text
+
+
 async def test_no_retry_when_already_at_the_ceiling(sleeps: list[float]) -> None:
     """SA-56 AC4: with no headroom left the cut-off raises without a pointless retry."""
     config = load_config(

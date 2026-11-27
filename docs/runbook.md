@@ -246,6 +246,22 @@ Rules (the agent never rewrites lines other than the one it ticks):
 
 Remove the local copy afterwards (`rm seed.md`) so it cannot go stale.
 
+## Claude replies cut off at `max_tokens`
+Every Claude call logs one `Claude call:` line with the flow (`post`, `reply`,
+`guard` or `seed`), `max_tokens`, `stop_reason` and the input and output token
+counts. A reply that stops at `max_tokens` is retried once at 2x the limit
+(never above `CLAUDE_MAX_TOKENS_CEILING`, default 8192). If that is cut off too,
+you get a Telegram alert naming the flow, the output token count and the first
+200 characters of the text; the truncated reply is never used.
+
+- Read the alert and the `Claude call:` lines in the logs first. A count far above
+  what the flow needs (a reply is about 300 tokens) means runaway output, so
+  raising the limit will not help.
+- If the output was genuinely long, raise that flow's `POST_MAX_TOKENS`,
+  `REPLY_MAX_TOKENS`, `GUARD_MAX_TOKENS` or `SEED_MAX_TOKENS` in `.env`, and the
+  ceiling if the limit is above it (a start-up warning says so), then
+  `docker compose up -d`.
+
 ## Read the logs
 
 Logs are one JSON object per line on stdout (`timestamp`, `level`, `logger`,
