@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from humblebrag.alerts import configure_alerts
-from humblebrag.claude_client import ClaudeAPIError
+from humblebrag.claude_client import ClaudeAPIError, Flow
 from humblebrag.generator import GeneratedPost
 from humblebrag.guard import (
     ALERT_EVENT,
@@ -61,7 +61,7 @@ class StubClient:
         self._replies = list(replies)
         self.calls: list[dict[str, Any]] = []
 
-    async def complete(self, system: str, prompt: str, max_tokens: int) -> str:
+    async def complete(self, system: str, prompt: str, flow: Flow) -> str:
         """Record the call; return or raise the next canned reply."""
         self.calls.append({"system": system, "prompt": prompt})
         reply = self._replies.pop(0)

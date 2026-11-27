@@ -74,3 +74,8 @@ the missing variables (never their values).
 | `SUBSTACK_COOKIE` | yes | Substack session cookie (secret) |
 | `RUN_TIME` | no | Daily run time, `HH:MM` (default `08:30`) |
 | `TZ` | no | IANA time zone (default `Europe/London`) |
+| `POST_MAX_TOKENS` | no | Output token limit for writing a post (default: the larger of 4096 and `POST_MAX_WORDS` x 3 + 512) |
+| `REPLY_MAX_TOKENS` | no | Output token limit for `/reply` (default `1024`) |
+| `GUARD_MAX_TOKENS` | no | Output token limit for the safety guard (default `512`) |
+| `SEED_MAX_TOKENS` | no | Output token limit for a generated seed (default `128`) |
+| `CLAUDE_MAX_TOKENS_CEILING` | no | Hard cap on every Claude call, including the retry (default `8192`). A reply cut off at `max_tokens` is retried once at 2x the limit, capped by this; a second cut-off alerts you on Telegram |

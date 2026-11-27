@@ -11,7 +11,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
-from humblebrag.claude_client import ClaudeClient
+from humblebrag.claude_client import ClaudeClient, Flow
 from humblebrag.fetcher import TargetType
 from humblebrag.persona import Persona, load_persona
 
@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_REPLY_PROMPT_PATH = Path("prompts/reply.md")
 SYSTEM_SEPARATOR = "\n\n---\n\n"
 MAX_ATTEMPTS = 2
-REPLY_MAX_TOKENS = 1024
 SHORT_WORDS = (20, 80)
 SHORT_BULLETS = 2
 LONG_WORDS = (80, 150)
@@ -181,7 +180,7 @@ class ReplyGenerator:
         problem: str | None = None
         for attempt in range(1, MAX_ATTEMPTS + 1):
             prompt = build_reply_prompt(target, steer, problem)
-            raw = await self._client.complete(self._system, prompt, REPLY_MAX_TOKENS)
+            raw = await self._client.complete(self._system, prompt, Flow.REPLY)
             try:
                 return check_reply(raw, target.kind)
             except MalformedReplyError as error:

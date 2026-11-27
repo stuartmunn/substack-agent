@@ -4,7 +4,7 @@ import logging
 import re
 from dataclasses import dataclass
 
-from humblebrag.claude_client import ClaudeClient
+from humblebrag.claude_client import ClaudeClient, Flow
 from humblebrag.config import Config
 from humblebrag.json_reply import JsonReplyError, parse_json_object
 from humblebrag.persona import Persona
@@ -12,9 +12,6 @@ from humblebrag.persona import Persona
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 2
-MIN_GENERATION_TOKENS = 4096
-TOKENS_PER_WORD_ALLOWANCE = 3
-JSON_OVERHEAD_TOKENS = 512
 REQUIRED_FIELDS = ("title", "subtitle", "body_markdown", "note_teaser", "image_scene")
 MAX_TEASER_CHARS = 280
 MAX_TEASER_SENTENCES = 2
@@ -176,10 +173,6 @@ class PostGenerator:
         self._persona = persona
         self._min_words = config.min_post_words
         self._max_words = config.max_post_words
-        self._max_tokens = max(
-            MIN_GENERATION_TOKENS,
-            config.max_post_words * TOKENS_PER_WORD_ALLOWANCE + JSON_OVERHEAD_TOKENS,
-        )
 
     async def generate(self, seed: str, steer: str | None = None) -> GeneratedPost:
         """Return a post for ``seed``; retry once on a malformed reply.
@@ -192,9 +185,7 @@ class PostGenerator:
             prompt = _build_prompt(
                 seed, steer, self._min_words, self._max_words, problem
             )
-            reply = await self._client.complete(
-                self._persona.text, prompt, self._max_tokens
-            )
+            reply = await self._client.complete(self._persona.text, prompt, Flow.POST)
             try:
                 return _parse_post(reply, self._min_words, self._max_words)
             except MalformedPostError as error:

@@ -4,7 +4,7 @@ import logging
 import re
 
 from humblebrag.alerts import alert
-from humblebrag.claude_client import ClaudeClient
+from humblebrag.claude_client import ClaudeClient, Flow
 from humblebrag.seed import Seed
 from humblebrag.seed_queue import SeedQueue
 
@@ -14,7 +14,6 @@ MAX_DUPLICATE_RETRIES = 3
 MAX_SEED_ATTEMPTS = MAX_DUPLICATE_RETRIES + 1
 MAX_LISTED_SEEDS = 200
 MAX_SEED_CHARS = 200
-SEED_MAX_TOKENS = 128
 ALERT_EVENT = "seed generation"
 NEUTRALISED_TAG = "[seeds tag removed]"
 _SEEDS_TAG = re.compile(r"<\s*/?\s*existing_seeds\b[^>]*>?", re.IGNORECASE)
@@ -64,9 +63,7 @@ class SeedProvider:
     async def _generate_seed(self, draft_id: str) -> Seed:
         """Ask Claude until a new, unique seed is reserved for the draft."""
         for attempt in range(1, MAX_SEED_ATTEMPTS + 1):
-            reply = await self._client.complete(
-                SEED_SYSTEM, self._prompt(), SEED_MAX_TOKENS
-            )
+            reply = await self._client.complete(SEED_SYSTEM, self._prompt(), Flow.SEED)
             suggestion = _clean_suggestion(reply)
             seed = (
                 self._queue.add_generated(suggestion, draft_id) if suggestion else None

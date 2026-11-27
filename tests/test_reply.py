@@ -15,7 +15,7 @@ from telegram.ext import CallbackQueryHandler, CommandHandler
 from humblebrag import bot as bot_module
 from humblebrag import reply as reply_module
 from humblebrag.alerts import configure_alerts
-from humblebrag.claude_client import ClaudeAPIError
+from humblebrag.claude_client import ClaudeAPIError, ClaudeResponseError
 from humblebrag.drafts import MAX_REDOS
 from humblebrag.fetcher import FetchResult, FetchStatus, TargetType
 from humblebrag.guard import GuardError, GuardRejectedError, GuardResult
@@ -454,6 +454,22 @@ async def test_a_claude_failure_alerts_and_tells_the_chat(
     assert len(alerts) == 1
     assert "/reply failed" in alerts[0]
     assert "HTTP 500" in alerts[0]
+    assert rig.bot.texts == [FAILED_TEXT]
+
+
+async def test_a_repeated_max_tokens_stop_alerts_with_flow_and_tokens(
+    rig: Rig, alerts: list[str]
+) -> None:
+    """SA-56 AC5: a reply cut off even after the retry alerts Stuart with the flow
+    and token count, and nothing truncated is sent."""
+    rig.generate_error = ClaudeResponseError(
+        "Claude reply call was cut off at max_tokens (2048 output tokens); "
+        "text starts: 'half'"
+    )
+    await rig.send(f"/reply {POST_URL}")
+    assert len(alerts) == 1
+    assert "reply" in alerts[0]
+    assert "2048 output tokens" in alerts[0]
     assert rig.bot.texts == [FAILED_TEXT]
 
 

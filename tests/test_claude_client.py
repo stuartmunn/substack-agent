@@ -23,6 +23,7 @@ from humblebrag.claude_client import (
     ClaudeRateLimitError,
     ClaudeResponseError,
     ClaudeTimeoutError,
+    Flow,
 )
 from humblebrag.config import Config, load_config
 
@@ -124,7 +125,9 @@ def _timeout(request: httpx2.Request) -> httpx2.Response:
 async def test_reply_text_is_returned(config: Config, sleeps: list[float]) -> None:
     """A normal reply comes back as plain text."""
     recorder = Recorder([_ok(_message("Hello there"))])
-    text = await _client(config, recorder).complete("be funny", "write a post")
+    text = await _client(config, recorder).complete(
+        "be funny", "write a post", Flow.REPLY
+    )
     assert text == "Hello there"
     assert sleeps == []
 
@@ -132,16 +135,17 @@ async def test_reply_text_is_returned(config: Config, sleeps: list[float]) -> No
 async def test_model_comes_from_config_and_request_is_well_formed(
     config: Config, sleeps: list[float]
 ) -> None:
-    """AC1: the model in the request is CLAUDE_MODEL; no sampling or thinking
-    parameters that current models reject are sent."""
+    """AC1: the model in the request is CLAUDE_MODEL; no sampling parameters that
+    current models reject are sent, and thinking is explicitly disabled (SA-56 AC6)."""
     recorder = Recorder([_ok(_message())])
-    await _client(config, recorder).complete("be funny", "write a post", max_tokens=777)
+    await _client(config, recorder).complete("be funny", "write a post", Flow.REPLY)
     body = json.loads(recorder.requests[0].content)
     assert body["model"] == MODEL
-    assert body["max_tokens"] == 777
+    assert body["max_tokens"] == config.reply_max_tokens
+    assert body["thinking"] == {"type": "disabled"}
     assert body["system"] == "be funny"
     assert body["messages"] == [{"role": "user", "content": "write a post"}]
-    for rejected in ("temperature", "top_p", "top_k", "thinking", "budget_tokens"):
+    for rejected in ("temperature", "top_p", "top_k", "budget_tokens"):
         assert rejected not in body
     assert recorder.requests[0].headers["authorization"] == f"Bearer {API_KEY}"
 
@@ -150,7 +154,7 @@ async def test_a_different_configured_model_is_used(sleeps: list[float]) -> None
     """AC1: changing CLAUDE_MODEL changes the request, with no code change."""
     other = load_config({**ENV, "CLAUDE_MODEL": "another-model"})
     recorder = Recorder([_ok(_message())])
-    await _client(other, recorder).complete("s", "p")
+    await _client(other, recorder).complete("s", "p", Flow.REPLY)
     assert json.loads(recorder.requests[0].content)["model"] == "another-model"
 
 
@@ -160,7 +164,7 @@ async def test_rate_limit_is_retried_then_succeeds(
     """AC2: two 429s then success means three requests and a good result."""
     limited = _ok(_error(429, "rate_limit_error"))
     recorder = Recorder([limited, limited, _ok(_message("finally"))])
-    assert await _client(config, recorder).complete("s", "p") == "finally"
+    assert await _client(config, recorder).complete("s", "p", Flow.REPLY) == "finally"
     assert len(recorder.requests) == 3
     assert len(sleeps) == 2
 
@@ -170,7 +174,7 @@ async def test_timeout_is_retried_then_succeeds(
 ) -> None:
     """AC2: a timeout followed by success is retried."""
     recorder = Recorder([_timeout, _ok(_message("recovered"))])
-    assert await _client(config, recorder).complete("s", "p") == "recovered"
+    assert await _client(config, recorder).complete("s", "p", Flow.REPLY) == "recovered"
     assert len(recorder.requests) == 2
 
 
@@ -180,7 +184,7 @@ async def test_retries_are_capped_at_three_with_growing_backoff(
     """AC2: persistent timeouts give 1 try + 3 retries, waiting longer each time."""
     recorder = Recorder([_timeout])
     with pytest.raises(ClaudeTimeoutError):
-        await _client(config, recorder).complete("s", "p")
+        await _client(config, recorder).complete("s", "p", Flow.REPLY)
     assert MAX_RETRIES == 3
     assert len(recorder.requests) == MAX_RETRIES + 1
     assert len(sleeps) == MAX_RETRIES
@@ -193,7 +197,7 @@ async def test_persistent_rate_limit_raises_a_typed_error(
     """AC2/AC3: after the last retry a 429 becomes ClaudeRateLimitError."""
     recorder = Recorder([_ok(_error(429, "rate_limit_error"))])
     with pytest.raises(ClaudeRateLimitError) as error:
-        await _client(config, recorder).complete("s", "p")
+        await _client(config, recorder).complete("s", "p", Flow.REPLY)
     assert len(recorder.requests) == MAX_RETRIES + 1
     assert isinstance(error.value, ClaudeError)
     assert "req_test123" in str(error.value)
@@ -205,7 +209,7 @@ async def test_persistent_timeout_raises_a_typed_error(
 ) -> None:
     """AC3: exhausted timeouts raise ClaudeTimeoutError, chained to the cause."""
     with pytest.raises(ClaudeTimeoutError) as error:
-        await _client(config, Recorder([_timeout])).complete("s", "p")
+        await _client(config, Recorder([_timeout])).complete("s", "p", Flow.REPLY)
     assert isinstance(error.value, ClaudeError)
     assert isinstance(error.value.__cause__, anthropic.APITimeoutError)
 
@@ -216,7 +220,7 @@ async def test_client_errors_are_not_retried(
     """AC3: a 400 fails at once as ClaudeAPIError carrying the status."""
     recorder = Recorder([_ok(_error(400, "invalid_request_error"))])
     with pytest.raises(ClaudeAPIError) as error:
-        await _client(config, recorder).complete("s", "p")
+        await _client(config, recorder).complete("s", "p", Flow.REPLY)
     assert len(recorder.requests) == 1
     assert sleeps == []
     assert error.value.status_code == 400
@@ -229,7 +233,7 @@ async def test_server_errors_are_retried_then_raise_a_typed_error(
     """AC3: a persistent 500 is retried, then raises ClaudeAPIError."""
     recorder = Recorder([_ok(_error(500, "api_error"))])
     with pytest.raises(ClaudeAPIError) as error:
-        await _client(config, recorder).complete("s", "p")
+        await _client(config, recorder).complete("s", "p", Flow.REPLY)
     assert len(recorder.requests) == MAX_RETRIES + 1
     assert error.value.status_code == 500
 
@@ -243,7 +247,7 @@ async def test_connection_failure_raises_a_typed_error(
         raise httpx2.ConnectError("refused", request=request)
 
     with pytest.raises(ClaudeAPIError) as error:
-        await _client(config, Recorder([refuse])).complete("s", "p")
+        await _client(config, Recorder([refuse])).complete("s", "p", Flow.REPLY)
     assert error.value.status_code is None
 
 
@@ -255,7 +259,7 @@ async def test_errors_never_contain_the_api_key(
     """SEC-03: an auth failure's typed error and logs hold no secret."""
     recorder = Recorder([_ok(_error(401, "authentication_error", "invalid x-api-key"))])
     with caplog.at_level(logging.DEBUG), pytest.raises(ClaudeAPIError) as error:
-        await _client(config, recorder).complete("s", "p")
+        await _client(config, recorder).complete("s", "p", Flow.REPLY)
     assert error.value.status_code == 401
     assert API_KEY not in str(error.value)
     assert API_KEY not in caplog.text
@@ -271,7 +275,7 @@ async def test_refusal_is_a_typed_error_not_empty_text(
         stop_details={"type": "refusal", "category": "cyber", "explanation": "x"},
     )
     with pytest.raises(ClaudeResponseError, match="cyber"):
-        await _client(config, Recorder([_ok(refusal)])).complete("s", "p")
+        await _client(config, Recorder([_ok(refusal)])).complete("s", "p", Flow.REPLY)
 
 
 async def test_truncated_reply_is_a_typed_error(
@@ -280,7 +284,159 @@ async def test_truncated_reply_is_a_typed_error(
     """A reply cut off at max_tokens is not silently used as a finished post."""
     cut = _message("half a sent", stop_reason="max_tokens")
     with pytest.raises(ClaudeResponseError, match="max_tokens"):
-        await _client(config, Recorder([_ok(cut)])).complete("s", "p")
+        await _client(config, Recorder([_ok(cut)])).complete("s", "p", Flow.REPLY)
+
+
+def _cut_off(text: str = "half a sent", output_tokens: int = 5) -> httpx2.Response:
+    """A reply that stopped at max_tokens, reporting ``output_tokens``."""
+    response = _message(text, stop_reason="max_tokens")
+    body = json.loads(response.content)
+    body["usage"]["output_tokens"] = output_tokens
+    return httpx2.Response(200, json=body)
+
+
+def _sent_limits(recorder: Recorder) -> list[int]:
+    """The max_tokens of every request the recorder saw."""
+    return [json.loads(request.content)["max_tokens"] for request in recorder.requests]
+
+
+@pytest.mark.parametrize(
+    ("flow", "setting", "value"),
+    [
+        (Flow.POST, "POST_MAX_TOKENS", 1111),
+        (Flow.REPLY, "REPLY_MAX_TOKENS", 2222),
+        (Flow.GUARD, "GUARD_MAX_TOKENS", 333),
+        (Flow.SEED, "SEED_MAX_TOKENS", 44),
+    ],
+)
+async def test_each_flow_sends_its_own_max_tokens(
+    flow: Flow, setting: str, value: int, sleeps: list[float]
+) -> None:
+    """SA-56 AC3: each flow's limit comes from its own setting."""
+    recorder = Recorder([_ok(_message())])
+    client = _client(load_config({**ENV, setting: str(value)}), recorder)
+    await client.complete("s", "p", flow)
+    assert _sent_limits(recorder) == [value]
+
+
+async def test_the_ceiling_caps_every_flow(sleeps: list[float]) -> None:
+    """SA-56 AC4: a setting above CLAUDE_MAX_TOKENS_CEILING is sent as the ceiling."""
+    config = load_config(
+        {**ENV, "POST_MAX_TOKENS": "9000", "CLAUDE_MAX_TOKENS_CEILING": "5000"}
+    )
+    recorder = Recorder([_ok(_message())])
+    await _client(config, recorder).complete("s", "p", Flow.POST)
+    assert _sent_limits(recorder) == [5000]
+
+
+async def test_a_max_tokens_stop_is_retried_once_at_double(
+    config: Config, sleeps: list[float]
+) -> None:
+    """SA-56 AC5: a cut-off reply is retried once at 2x and the retry's text used."""
+    recorder = Recorder([_ok(_cut_off()), _ok(_message("whole reply"))])
+    text = await _client(config, recorder).complete("s", "p", Flow.REPLY)
+    assert text == "whole reply"
+    assert _sent_limits(recorder) == [
+        config.reply_max_tokens,
+        config.reply_max_tokens * 2,
+    ]
+
+
+async def test_the_retry_is_capped_by_the_ceiling(sleeps: list[float]) -> None:
+    """SA-56 AC4/AC5: 2x never exceeds the ceiling."""
+    config = load_config(
+        {
+            **ENV,
+            "REPLY_MAX_TOKENS": "1500",
+            "CLAUDE_MAX_TOKENS_CEILING": "2000",
+            "POST_MAX_TOKENS": "100",
+        }
+    )
+    recorder = Recorder([_ok(_cut_off()), _ok(_message())])
+    await _client(config, recorder).complete("s", "p", Flow.REPLY)
+    assert _sent_limits(recorder) == [1500, 2000]
+
+
+async def test_a_limit_above_the_ceiling_is_warned_about(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A configured limit that the ceiling silently lowers is logged at start-up."""
+    config = load_config(
+        {
+            **ENV,
+            "REPLY_MAX_TOKENS": "3000",
+            "CLAUDE_MAX_TOKENS_CEILING": "2000",
+            "POST_MAX_TOKENS": "100",
+        }
+    )
+    with caplog.at_level("WARNING"):
+        _client(config, Recorder([]))
+    assert "exceeds CLAUDE_MAX_TOKENS_CEILING" in caplog.text
+
+
+async def test_no_retry_when_already_at_the_ceiling(sleeps: list[float]) -> None:
+    """SA-56 AC4: with no headroom left the cut-off raises without a pointless retry."""
+    config = load_config(
+        {
+            **ENV,
+            "REPLY_MAX_TOKENS": "2000",
+            "CLAUDE_MAX_TOKENS_CEILING": "2000",
+            "POST_MAX_TOKENS": "100",
+        }
+    )
+    recorder = Recorder([_ok(_cut_off())])
+    with pytest.raises(ClaudeResponseError):
+        await _client(config, recorder).complete("s", "p", Flow.REPLY)
+    assert _sent_limits(recorder) == [2000]
+
+
+async def test_a_second_cut_off_raises_and_never_returns_the_text(
+    config: Config, sleeps: list[float]
+) -> None:
+    """SA-56 AC2/AC5: after the one retry the error names the flow, the output
+    tokens and the first 200 characters; the truncated text is not returned."""
+    long_text = "x" * 300
+    recorder = Recorder([_ok(_cut_off("first")), _ok(_cut_off(long_text, 2048))])
+    with pytest.raises(ClaudeResponseError) as error:
+        await _client(config, recorder).complete("s", "p", Flow.REPLY)
+    assert len(recorder.requests) == 2
+    message = str(error.value)
+    assert "reply" in message
+    assert "2048 output tokens" in message
+    assert "x" * 200 in message
+    assert "x" * 201 not in message
+
+
+async def test_every_call_logs_its_usage(
+    config: Config, sleeps: list[float], caplog: pytest.LogCaptureFixture
+) -> None:
+    """SA-56 AC1: flow, model, max_tokens, stop_reason and token counts are logged."""
+    with caplog.at_level(logging.INFO, logger="humblebrag.claude_client"):
+        await _client(config, Recorder([_ok(_message())])).complete(
+            "s", "p", Flow.GUARD
+        )
+    line = caplog.messages[-1]
+    for expected in (
+        "flow=guard",
+        f"model={MODEL}",
+        f"max_tokens={config.guard_max_tokens}",
+        "stop_reason=end_turn",
+        "input_tokens=3",
+        "output_tokens=5",
+    ):
+        assert expected in line
+
+
+async def test_a_retried_call_logs_both_attempts(
+    config: Config, sleeps: list[float], caplog: pytest.LogCaptureFixture
+) -> None:
+    """SA-56 AC1: the cut-off attempt is logged too, so the cause is diagnosable."""
+    recorder = Recorder([_ok(_cut_off()), _ok(_message())])
+    with caplog.at_level(logging.INFO, logger="humblebrag.claude_client"):
+        await _client(config, recorder).complete("s", "p", Flow.REPLY)
+    calls = [m for m in caplog.messages if m.startswith("Claude call:")]
+    assert len(calls) == 2
+    assert "stop_reason=max_tokens" in calls[0]
 
 
 async def test_empty_reply_is_a_typed_error(
@@ -288,7 +444,9 @@ async def test_empty_reply_is_a_typed_error(
 ) -> None:
     """A reply with no text raises instead of returning an empty string."""
     with pytest.raises(ClaudeResponseError, match="no text"):
-        await _client(config, Recorder([_ok(_message(content=[]))])).complete("s", "p")
+        await _client(config, Recorder([_ok(_message(content=[]))])).complete(
+            "s", "p", Flow.REPLY
+        )
 
 
 async def test_only_text_blocks_are_returned(
@@ -302,7 +460,7 @@ async def test_only_text_blocks_are_returned(
             {"type": "text", "text": "Part two.\n"},
         ]
     )
-    text = await _client(config, Recorder([_ok(mixed)])).complete("s", "p")
+    text = await _client(config, Recorder([_ok(mixed)])).complete("s", "p", Flow.REPLY)
     assert text == "Part one. Part two."
 
 

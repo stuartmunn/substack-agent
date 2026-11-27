@@ -2,6 +2,7 @@
 typed errors for the caller to alert on."""
 
 import logging
+from enum import StrEnum
 
 import anthropic
 
@@ -11,8 +12,19 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 REQUEST_TIMEOUT_SECONDS = 120.0
-DEFAULT_MAX_TOKENS = 4096
 USER_ROLE = "user"
+RETRY_TOKEN_FACTOR = 2
+ERROR_TEXT_PREVIEW_CHARS = 200
+THINKING_DISABLED: anthropic.types.ThinkingConfigDisabledParam = {"type": "disabled"}
+
+
+class Flow(StrEnum):
+    """The kind of work a Claude call does; each has its own max_tokens setting."""
+
+    POST = "post"
+    REPLY = "reply"
+    GUARD = "guard"
+    SEED = "seed"
 
 
 class ClaudeError(Exception):
@@ -55,6 +67,22 @@ class ClaudeClient:
     ) -> None:
         """Build the async client; ``http_client`` lets tests mock the transport."""
         self._model = config.claude_model
+        self._ceiling = config.max_tokens_ceiling
+        self._limits = {
+            Flow.POST: config.post_max_tokens,
+            Flow.REPLY: config.reply_max_tokens,
+            Flow.GUARD: config.guard_max_tokens,
+            Flow.SEED: config.seed_max_tokens,
+        }
+        for flow, limit in self._limits.items():
+            if limit > self._ceiling:
+                logger.warning(
+                    "Claude %s max_tokens (%d) exceeds CLAUDE_MAX_TOKENS_CEILING "
+                    "(%d); the ceiling applies",
+                    flow,
+                    limit,
+                    self._ceiling,
+                )
         self._client = anthropic.AsyncAnthropic(
             api_key=config.anthropic_api_key,
             max_retries=MAX_RETRIES,
@@ -62,14 +90,36 @@ class ClaudeClient:
             http_client=http_client,
         )
 
-    async def complete(
-        self, system: str, prompt: str, max_tokens: int = DEFAULT_MAX_TOKENS
-    ) -> str:
-        """Return the model's text reply to ``prompt``, or raise a ClaudeError."""
+    async def complete(self, system: str, prompt: str, flow: Flow) -> str:
+        """Return the model's text reply to ``prompt``, or raise a ClaudeError.
+
+        The flow's max_tokens (capped by the ceiling) applies. A reply cut off at
+        max_tokens is retried once with the limit doubled, still capped by the
+        ceiling; a second cut-off raises ClaudeResponseError.
+        """
+        limit = min(self._limits[flow], self._ceiling)
+        response = await self._request(system, prompt, flow, limit)
+        if response.stop_reason == "max_tokens":
+            retry_limit = min(limit * RETRY_TOKEN_FACTOR, self._ceiling)
+            if retry_limit > limit:
+                logger.warning(
+                    "Claude %s call hit max_tokens (%d); retrying once at %d",
+                    flow,
+                    limit,
+                    retry_limit,
+                )
+                response = await self._request(system, prompt, flow, retry_limit)
+        return self._reply_text(response, flow)
+
+    async def _request(
+        self, system: str, prompt: str, flow: Flow, max_tokens: int
+    ) -> anthropic.types.Message:
+        """Make one API call, log its token usage and map SDK errors to ours."""
         try:
             response = await self._client.messages.create(
                 model=self._model,
                 max_tokens=max_tokens,
+                thinking=THINKING_DISABLED,
                 system=system,
                 messages=[{"role": USER_ROLE, "content": prompt}],
             )
@@ -92,21 +142,35 @@ class ClaudeClient:
             raise ClaudeAPIError(
                 f"Claude API connection failed after {MAX_RETRIES} retries"
             ) from error
-        return self._reply_text(response)
+        logger.info(
+            "Claude call: flow=%s model=%s max_tokens=%d stop_reason=%s "
+            "input_tokens=%d output_tokens=%d",
+            flow,
+            self._model,
+            max_tokens,
+            response.stop_reason,
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+        )
+        return response
 
     @staticmethod
-    def _reply_text(response: anthropic.types.Message) -> str:
+    def _reply_text(response: anthropic.types.Message, flow: Flow) -> str:
         """Return the reply text, or raise if the reply is unusable."""
         if response.stop_reason == "refusal":
             category = response.stop_details.category if response.stop_details else None
             raise ClaudeResponseError(
                 f"Claude declined the request (category: {category})"
             )
-        if response.stop_reason == "max_tokens":
-            raise ClaudeResponseError("Claude's reply was cut off at max_tokens")
         text = "".join(
             block.text for block in response.content if block.type == "text"
         ).strip()
+        if response.stop_reason == "max_tokens":
+            raise ClaudeResponseError(
+                f"Claude {flow} call was cut off at max_tokens "
+                f"({response.usage.output_tokens} output tokens); "
+                f"text starts: {text[:ERROR_TEXT_PREVIEW_CHARS]!r}"
+            )
         if not text:
             raise ClaudeResponseError("Claude returned no text")
         return text
