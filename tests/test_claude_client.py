@@ -15,6 +15,7 @@ import httpx2
 import pytest
 
 from humblebrag.claude_client import (
+    ERROR_TEXT_PREVIEW_CHARS,
     MAX_RETRIES,
     REQUEST_TIMEOUT_SECONDS,
     ClaudeAPIError,
@@ -264,8 +265,8 @@ async def test_api_error_message_is_capped_at_200_characters(
     recorder = Recorder([_ok(_error(400, "invalid_request_error", "x" * 500))])
     with pytest.raises(ClaudeAPIError) as error:
         await _client(config, recorder).complete("s", "p", Flow.REPLY)
-    assert "x" * 200 in str(error.value)
-    assert "x" * 201 not in str(error.value)
+    assert "x" * ERROR_TEXT_PREVIEW_CHARS in str(error.value)
+    assert "x" * (ERROR_TEXT_PREVIEW_CHARS + 1) not in str(error.value)
 
 
 async def test_api_error_without_a_body_reads_as_unknown(

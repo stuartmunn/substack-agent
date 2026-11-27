@@ -234,9 +234,9 @@ class ReplyService:
         if request.pasted:
             return ReplyTarget(kind, request.pasted)
         result = await self._fetch(request.url)
-        if result.ok and result.target_type is not None and result.text.strip():
-            return ReplyTarget(result.target_type, result.text, result.parent_title)
-        if result.ok:
+        if result.ok and result.target_type is not None:
+            if result.text.strip():
+                return ReplyTarget(result.target_type, result.text, result.parent_title)
             logger.warning("Fetched text is empty; asking for pasted text")
             await bot.send_message(chat_id=chat_id, text=COULDNT_READ_TEXT)
             return None
