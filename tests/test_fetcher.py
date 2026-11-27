@@ -90,6 +90,25 @@ def _serve(name: str) -> FakeGet:
     return FakeGet(FakeResponse(body=_page(name)))
 
 
+WFH_NOTE_URL = "https://substack.com/@hithisisbry/note/c-398035566"
+WFH_NOTE_TEXT = (
+    "Why can't people understand that working from home can help people do "
+    "their best work, having the right environment can make an enormous "
+    "difference."
+)
+
+
+@pytest.mark.parametrize("query", ["", "?r=9gykro"])
+def test_the_sa58_note_is_read_with_and_without_the_r_parameter(query: str) -> None:
+    """SA-58 AC3/AC7: the saved page gives the same readable text either way."""
+    result = fetch_target(
+        WFH_NOTE_URL + query, get=_serve("note_working_from_home.html")
+    )
+    assert result.ok
+    assert result.target_type is TargetType.NOTE
+    assert result.text == WFH_NOTE_TEXT
+
+
 PUBLIC_ADDRESS = "93.184.216.34"
 
 
