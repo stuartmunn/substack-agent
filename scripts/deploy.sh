@@ -45,4 +45,4 @@ step "Smoke test: Telegram message, then one real Claude call per flow"
 docker compose exec -T "$SERVICE" python -m humblebrag.smoke \
     || fail "smoke test failed; see: docker compose logs ${SERVICE}"
 
-step "Deployed. Check Telegram for: Sir Humblebrag reporting for duty, and four passes"
+step "Deployed. Check Telegram for: Sir Humblebrag reporting for duty, and one pass per Claude flow"

@@ -10,6 +10,7 @@ import pytest
 from humblebrag import smoke
 from humblebrag.claude_client import ClaudeAPIError, Flow
 from humblebrag.config import Config, load_config
+from humblebrag.logging_setup import SecretRedactor
 from humblebrag.smoke import EXIT_FAILED, EXIT_OK, SMOKE_MESSAGE, run_smoke_test
 
 ENV = {
@@ -121,14 +122,15 @@ def test_a_failing_flow_is_reported_with_its_error_and_fails_the_smoke_test() ->
     assert "✅ seed: pass" in report
 
 
-def test_the_report_never_contains_the_api_key() -> None:
+def test_the_report_never_contains_the_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Hard rule: secrets are redacted from what goes to Telegram."""
-    smoke.redactor.add(["sk-ant-key"])
+    own_redactor = SecretRedactor()
+    own_redactor.add(["sk-ant-key"])
+    monkeypatch.setattr(smoke, "redactor", own_redactor)
     FakeClaude.failing = {Flow.POST: RuntimeError("bad key sk-ant-key")}
-    try:
-        run_smoke_test(load_config(ENV))
-    finally:
-        smoke.redactor.clear()
+    run_smoke_test(load_config(ENV))
     assert "sk-ant-key" not in FakeBot.sent[-1]["text"]
 
 
