@@ -242,6 +242,18 @@ async def test_a_failed_read_asks_for_pasted_text_and_never_guesses(
     assert rig.generated == []
 
 
+# SA-58 AC8: empty fetched text asks for pasted text, with no Claude call
+
+
+@pytest.mark.parametrize("text", ["", "   ", "\n\t \xa0\n"])
+async def test_empty_fetched_text_makes_no_claude_call(rig: Rig, text: str) -> None:
+    """SA-58 AC8: blank text from an OK fetch reuses the paste fallback."""
+    rig.fetch_result = FetchResult(FetchStatus.OK, "", TargetType.NOTE, text)
+    await rig.send(f"/reply {NOTE_URL}")
+    assert rig.bot.texts == [COULDNT_READ_TEXT]
+    assert rig.generated == []
+
+
 # AC4: pasted text skips the fetch
 
 

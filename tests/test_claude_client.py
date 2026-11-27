@@ -15,6 +15,7 @@ import httpx2
 import pytest
 
 from humblebrag.claude_client import (
+    ERROR_TEXT_PREVIEW_CHARS,
     MAX_RETRIES,
     REQUEST_TIMEOUT_SECONDS,
     ClaudeAPIError,
@@ -26,6 +27,7 @@ from humblebrag.claude_client import (
     Flow,
 )
 from humblebrag.config import Config, load_config
+from humblebrag.logging_setup import redactor
 
 API_KEY = "sk-ant-SECRET-key"
 MODEL = "claude-test-model-from-env"
@@ -225,6 +227,73 @@ async def test_client_errors_are_not_retried(
     assert sleeps == []
     assert error.value.status_code == 400
     assert "req_test123" in str(error.value)
+
+
+async def test_api_error_detail_is_logged_and_in_the_message(
+    config: Config,
+    sleeps: list[float],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SA-58 AC1/AC6: a 400's type and message reach the log and the error text."""
+    prompt = "SECRET-PROMPT-TEXT"
+    recorder = Recorder(
+        [_ok(_error(400, "invalid_request_error", "messages: text is bad"))]
+    )
+    with caplog.at_level(logging.DEBUG), pytest.raises(ClaudeAPIError) as error:
+        await _client(config, recorder).complete("s", prompt, Flow.REPLY)
+    text = str(error.value)
+    ours = "\n".join(
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "humblebrag.claude_client"
+    )
+    assert "HTTP 400" in text
+    assert "status=400" in ours
+    for part in ("req_test123", "invalid_request_error", "text is bad"):
+        assert part in text
+        assert part in ours
+    assert "flow reply" in text
+    assert "max_tokens=" in ours
+    assert prompt not in text
+    assert prompt not in ours
+    assert API_KEY not in ours
+
+
+async def test_api_error_message_is_capped_at_200_characters(
+    config: Config, sleeps: list[float]
+) -> None:
+    """SA-58 AC2: a long API message is cut to 200 characters."""
+    recorder = Recorder([_ok(_error(400, "invalid_request_error", "x" * 500))])
+    with pytest.raises(ClaudeAPIError) as error:
+        await _client(config, recorder).complete("s", "p", Flow.REPLY)
+    assert "x" * ERROR_TEXT_PREVIEW_CHARS in str(error.value)
+    assert "x" * (ERROR_TEXT_PREVIEW_CHARS + 1) not in str(error.value)
+
+
+async def test_api_error_message_is_redacted_before_it_is_capped(
+    config: Config, sleeps: list[float]
+) -> None:
+    """SEC-14: a secret straddling the cap is masked whole, not cut in half."""
+    secret = "sk-ant-STRADDLES-THE-CAP"
+    padding = "y" * (ERROR_TEXT_PREVIEW_CHARS - 8)
+    recorder = Recorder([_ok(_error(400, "invalid_request_error", padding + secret))])
+    redactor.add([secret])
+    try:
+        with pytest.raises(ClaudeAPIError) as error:
+            await _client(config, recorder).complete("s", "p", Flow.REPLY)
+    finally:
+        redactor.clear()
+    assert secret not in str(error.value)
+    assert "sk-ant" not in str(error.value)
+
+
+async def test_api_error_without_a_body_reads_as_unknown(
+    config: Config, sleeps: list[float]
+) -> None:
+    """SA-58 AC1: a status error with no JSON body still raises cleanly."""
+    bare = httpx2.Response(400, headers={"request-id": "req_test123"}, text="oops")
+    with pytest.raises(ClaudeAPIError, match="type unknown"):
+        await _client(config, Recorder([_ok(bare)])).complete("s", "p", Flow.REPLY)
 
 
 async def test_server_errors_are_retried_then_raise_a_typed_error(

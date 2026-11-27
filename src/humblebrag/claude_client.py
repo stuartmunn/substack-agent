@@ -7,6 +7,7 @@ from enum import StrEnum
 import anthropic
 
 from humblebrag.config import Config
+from humblebrag.logging_setup import redactor
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ REQUEST_TIMEOUT_SECONDS = 120.0
 USER_ROLE = "user"
 RETRY_TOKEN_FACTOR = 2
 ERROR_TEXT_PREVIEW_CHARS = 200
+UNKNOWN_ERROR_PART = "unknown"
 THINKING_DISABLED: anthropic.types.ThinkingConfigDisabledParam = {"type": "disabled"}
 
 
@@ -25,6 +27,24 @@ class Flow(StrEnum):
     REPLY = "reply"
     GUARD = "guard"
     SEED = "seed"
+
+
+def _error_detail(error: anthropic.APIStatusError) -> tuple[str, str]:
+    """The API's error type and message, from the response body, length-capped.
+
+    Only the API's own ``error`` object is read, never our request. Known
+    secrets are redacted before the cap, so a cut cannot split one past the
+    redactor. The redactor does not know prompt text: if the API quotes a
+    fragment of the request, up to the cap of it can show. Missing parts read
+    as "unknown".
+    """
+    body = error.body if isinstance(error.body, dict) else {}
+    detail = body.get("error")
+    detail = detail if isinstance(detail, dict) else {}
+    error_type = str(detail.get("type") or UNKNOWN_ERROR_PART)
+    message = " ".join(str(detail.get("message") or UNKNOWN_ERROR_PART).split())
+    message = redactor.redact(message)
+    return error_type[:ERROR_TEXT_PREVIEW_CHARS], message[:ERROR_TEXT_PREVIEW_CHARS]
 
 
 class ClaudeError(Exception):
@@ -133,9 +153,21 @@ class ClaudeClient:
                 f"(request {error.request_id})"
             ) from error
         except anthropic.APIStatusError as error:
+            error_type, error_message = _error_detail(error)
+            logger.error(
+                "Claude API error: flow=%s max_tokens=%d status=%s request=%s "
+                "type=%s message=%s",
+                flow,
+                max_tokens,
+                error.status_code,
+                error.request_id,
+                error_type,
+                error_message,
+            )
             raise ClaudeAPIError(
                 f"Claude API returned HTTP {error.status_code} "
-                f"(request {error.request_id})",
+                f"(request {error.request_id}, flow {flow}, "
+                f"type {error_type}): {error_message}",
                 status_code=error.status_code,
             ) from error
         except anthropic.APIConnectionError as error:
