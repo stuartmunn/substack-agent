@@ -31,8 +31,9 @@ class Flow(StrEnum):
 def _error_detail(error: anthropic.APIStatusError) -> tuple[str, str]:
     """The API's error type and message, from the response body, length-capped.
 
-    Only the API's own ``error`` object is read, never the request, so prompt
-    text is not logged by us. Missing parts read as "unknown".
+    Only the API's own ``error`` object is read, never our request. The API may
+    quote a fragment of the request in its message, so the cap and the redactor
+    bound what can leak. Missing parts read as "unknown".
     """
     body = error.body if isinstance(error.body, dict) else {}
     detail = body.get("error")
