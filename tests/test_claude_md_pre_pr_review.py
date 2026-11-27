@@ -29,7 +29,20 @@ def test_waits_for_findings_before_raising_pr() -> None:
     """AC2: the agent waits for the background review to report."""
     section = _section(HEADING)
     assert "Wait for the findings before going on" in section
-    assert "background" in section
+    assert "do not run `gh pr create` until it has reported" in section
+
+
+def test_failed_review_run_is_not_clean() -> None:
+    """A failed or empty review run is rerun, not treated as nothing to fix."""
+    assert "A run that fails or returns no result is not clean" in _section(HEADING)
+
+
+def test_checks_rerun_after_fix_edits() -> None:
+    """--fix edits land after the earlier checks, so ruff and pytest rerun."""
+    section = _section(HEADING)
+    assert "Commit any `--fix` edits, then rerun" in section
+    assert "`ruff check .`" in section
+    assert "`pytest`" in section
 
 
 def test_each_finding_has_one_of_three_outcomes() -> None:
