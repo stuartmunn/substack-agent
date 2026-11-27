@@ -60,11 +60,13 @@ Before running `gh pr create`:
    reason, or skip it with a reason.
 5. After fixing, commit the fixes and rerun the review. Stop once a run has
    nothing left to fix, or after 3 rounds. A run that fails or returns no
-   result is not clean: rerun it, and flag it in the PR if it stays that way.
+   result is not clean: rerun it (it counts as a round), and flag it in the PR
+   if it stays that way.
 6. If the 3-round limit is hit with a finding still open, raise the PR anyway
    and flag that finding in the PR description.
 7. Commit any `--fix` edits, then rerun `ruff check .`, `ruff format --check .`
-   and `pytest`: the fixes land after the earlier checks and are unverified.
+   and `pytest`, and self-review the `--fix` diff against `CODING_STANDARDS.md`:
+   the fixes land after the earlier checks and are unverified.
 8. Add a "Pre-PR review" section to the PR description listing each finding
    and its outcome.
 

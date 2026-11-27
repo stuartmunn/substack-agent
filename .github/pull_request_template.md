@@ -20,5 +20,6 @@
 
 ## Checklist
 - [ ] Self-reviewed against CODING_STANDARDS.md
+- [ ] Pre-PR review (`/code-review medium --fix`) done and recorded above
 - [ ] `ruff check .` and `ruff format --check .` clean
 - [ ] `pytest` green

@@ -43,6 +43,12 @@ def test_checks_rerun_after_fix_edits() -> None:
     assert "Commit any `--fix` edits, then rerun" in section
     assert "`ruff check .`" in section
     assert "`pytest`" in section
+    assert "self-review the `--fix` diff against `CODING_STANDARDS.md`" in section
+
+
+def test_pr_template_checklist_has_pre_pr_review_box() -> None:
+    """The PR checklist cannot be ticked without the Pre-PR review."""
+    assert "- [ ] Pre-PR review" in PR_TEMPLATE.read_text(encoding="utf-8")
 
 
 def test_each_finding_has_one_of_three_outcomes() -> None:
