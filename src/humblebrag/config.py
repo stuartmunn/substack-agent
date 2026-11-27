@@ -161,9 +161,17 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     max_words = _parse_positive_int(source, "POST_MAX_WORDS", DEFAULT_MAX_POST_WORDS)
     if min_words > max_words:
         raise ConfigError("POST_MIN_WORDS must not exceed POST_MAX_WORDS")
+    ceiling = _parse_positive_int(
+        source, "CLAUDE_MAX_TOKENS_CEILING", DEFAULT_MAX_TOKENS_CEILING
+    )
     default_post_tokens = max(
         MIN_POST_TOKENS, max_words * TOKENS_PER_WORD_ALLOWANCE + JSON_OVERHEAD_TOKENS
     )
+    if _read_value(source, "POST_MAX_TOKENS") is None and default_post_tokens > ceiling:
+        raise ConfigError(
+            f"POST_MAX_WORDS needs {default_post_tokens} output tokens, above "
+            "CLAUDE_MAX_TOKENS_CEILING; raise the ceiling or set POST_MAX_TOKENS"
+        )
     return Config(
         telegram_bot_token=token,
         telegram_chat_id=_parse_chat_id(chat_id),
@@ -193,9 +201,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         seed_max_tokens=_parse_positive_int(
             source, "SEED_MAX_TOKENS", DEFAULT_SEED_MAX_TOKENS
         ),
-        max_tokens_ceiling=_parse_positive_int(
-            source, "CLAUDE_MAX_TOKENS_CEILING", DEFAULT_MAX_TOKENS_CEILING
-        ),
+        max_tokens_ceiling=ceiling,
     )
 
 

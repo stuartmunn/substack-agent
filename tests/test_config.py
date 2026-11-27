@@ -235,7 +235,14 @@ def test_token_limits_have_the_previous_values_as_defaults() -> None:
 
 def test_post_token_default_grows_with_the_word_range() -> None:
     """The derived POST_MAX_TOKENS default still scales with POST_MAX_WORDS."""
-    config = load_config({**BASE_ENV, "POST_MIN_WORDS": "10", "POST_MAX_WORDS": "5000"})
+    config = load_config(
+        {
+            **BASE_ENV,
+            "POST_MIN_WORDS": "10",
+            "POST_MAX_WORDS": "5000",
+            "CLAUDE_MAX_TOKENS_CEILING": "20000",
+        }
+    )
     assert config.post_max_tokens == 5000 * 3 + 512
     explicit = load_config({**BASE_ENV, "POST_MAX_TOKENS": "999"})
     assert explicit.post_max_tokens == 999
@@ -256,3 +263,12 @@ def test_bad_token_settings_are_rejected(name: str, bad: str) -> None:
     """SA-56 AC3: token settings must be positive integers, naming the variable."""
     with pytest.raises(ConfigError, match=name):
         load_config({**BASE_ENV, name: bad})
+
+
+def test_derived_post_limit_above_the_ceiling_is_rejected() -> None:
+    """A long word range with no room under the ceiling fails fast, since a
+    cut-off post could not be retried; an explicit POST_MAX_TOKENS is allowed."""
+    env = {**BASE_ENV, "POST_MIN_WORDS": "10", "POST_MAX_WORDS": "3000"}
+    with pytest.raises(ConfigError, match="CLAUDE_MAX_TOKENS_CEILING"):
+        load_config(env)
+    assert load_config({**env, "POST_MAX_TOKENS": "4000"}).post_max_tokens == 4000

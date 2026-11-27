@@ -345,7 +345,12 @@ async def test_a_max_tokens_stop_is_retried_once_at_double(
 async def test_the_retry_is_capped_by_the_ceiling(sleeps: list[float]) -> None:
     """SA-56 AC4/AC5: 2x never exceeds the ceiling."""
     config = load_config(
-        {**ENV, "REPLY_MAX_TOKENS": "1500", "CLAUDE_MAX_TOKENS_CEILING": "2000"}
+        {
+            **ENV,
+            "REPLY_MAX_TOKENS": "1500",
+            "CLAUDE_MAX_TOKENS_CEILING": "2000",
+            "POST_MAX_TOKENS": "100",
+        }
     )
     recorder = Recorder([_ok(_cut_off()), _ok(_message())])
     await _client(config, recorder).complete("s", "p", Flow.REPLY)
@@ -357,7 +362,12 @@ async def test_a_limit_above_the_ceiling_is_warned_about(
 ) -> None:
     """A configured limit that the ceiling silently lowers is logged at start-up."""
     config = load_config(
-        {**ENV, "REPLY_MAX_TOKENS": "3000", "CLAUDE_MAX_TOKENS_CEILING": "2000"}
+        {
+            **ENV,
+            "REPLY_MAX_TOKENS": "3000",
+            "CLAUDE_MAX_TOKENS_CEILING": "2000",
+            "POST_MAX_TOKENS": "100",
+        }
     )
     with caplog.at_level("WARNING"):
         _client(config, Recorder([]))
@@ -367,7 +377,12 @@ async def test_a_limit_above_the_ceiling_is_warned_about(
 async def test_no_retry_when_already_at_the_ceiling(sleeps: list[float]) -> None:
     """SA-56 AC4: with no headroom left the cut-off raises without a pointless retry."""
     config = load_config(
-        {**ENV, "REPLY_MAX_TOKENS": "2000", "CLAUDE_MAX_TOKENS_CEILING": "2000"}
+        {
+            **ENV,
+            "REPLY_MAX_TOKENS": "2000",
+            "CLAUDE_MAX_TOKENS_CEILING": "2000",
+            "POST_MAX_TOKENS": "100",
+        }
     )
     recorder = Recorder([_ok(_cut_off())])
     with pytest.raises(ClaudeResponseError):
