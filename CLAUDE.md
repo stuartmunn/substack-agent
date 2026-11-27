@@ -48,24 +48,22 @@ Jira project: SA (stuartmunn.atlassian.net). One Jira story = one branch = one P
 
 ## Pre-PR review
 Before running `gh pr create`:
-1. Run `/code-review medium --fix` on the story branch. Always pass `medium`
-   explicitly, otherwise the review reuses the last level typed.
-2. Wait for the findings before going on. The review runs as a background
+1. Commit all story work (`SA-<n>: ...`) before each round. `--fix` edits have
+   no rewind checkpoints; git on the story branch is the safety net.
+2. Run `/code-review medium --fix Follow CODING_STANDARDS.md as well as CLAUDE.md.`
+   on the story branch. Always pass `medium` explicitly, otherwise the review
+   reuses the last level typed. The review reads CLAUDE.md but not other files
+   unless pointed at them, hence the trailing instruction.
+3. Wait for the findings before going on. The review runs as a background
    subagent, so do not run `gh pr create` until it has reported.
-3. For each finding, do one of: fix it, mark it "no change needed" with a
+4. For each finding, do one of: fix it, mark it "no change needed" with a
    reason, or skip it with a reason.
-4. After fixing, rerun the review. Stop once a run has nothing left to fix,
+5. After fixing, rerun the review. Stop once a run has nothing left to fix,
    or after 3 rounds.
-5. If the 3-round limit is hit with a finding still open, raise the PR anyway
+6. If the 3-round limit is hit with a finding still open, raise the PR anyway
    and flag that finding in the PR description.
-6. Add a "Pre-PR review" section to the PR description listing each finding
+7. Add a "Pre-PR review" section to the PR description listing each finding
    and its outcome.
-7. Reviews follow `CODING_STANDARDS.md` as well as this file. The review reads
-   CLAUDE.md but not other files unless pointed at them, so tell it to follow
-   `CODING_STANDARDS.md`.
-
-`--fix` edits made in the background have no rewind checkpoints; git on the
-story branch is the safety net, so commit before each round.
 
 Note: only a GitHub PR comment of exactly `/review` triggers PR-Agent. In
 Claude Code, `/review` is an alias for `/code-review`, so it is not the same
