@@ -114,8 +114,10 @@ rejected text is discarded.
 4. **Reply flow:** do not append the previous failure text to the retry prompt for
    word-count failures without also restating "reply with the reply text only"
    (to check once the logs show the content). Add a one-line test fixture.
-5. **Explicitly send `thinking: {"type": "disabled"}`** (or document the choice) so the
-   behaviour does not depend on API defaults.
+5. ~~Explicitly send `thinking: {"type": "disabled"}`~~ **Withdrawn (SA-58, SA-59):**
+   `claude-sonnet-5-5` and `claude-opus-5-5` reject `disabled` with HTTP 400, and the
+   accepted "off" value differs by model. The `thinking` parameter is now left out;
+   SA-56's token logging shows if a model's default thinking inflates output tokens.
 
 ## 6. Follow-on story (draft, AC7)
 
@@ -132,7 +134,8 @@ Acceptance criteria:
 3. A global ceiling is enforced on every call.
 4. On `stop_reason == "max_tokens"`: one retry at 2x (capped), then a Telegram
    alert naming the flow and token count. Never silent.
-5. Thinking is explicitly disabled or its budget accounted for.
+5. ~~Thinking is explicitly disabled~~ (withdrawn, see above): thinking is not sent;
+   its budget is watched through the token-usage log.
 6. Tests cover: the cap is sent, the retry doubles and is clamped, a second
    cut-off alerts, and the ceiling holds.
 7. Reproduce the `/reply` overflow with the new logging and record the cause in

@@ -18,10 +18,12 @@ editor link. The agent never calls Substack's publish endpoint. It creates and u
 2. Put the non-secret values (`TELEGRAM_CHAT_ID`, `CLAUDE_MODEL`,
    `SUBSTACK_PUBLICATION_URL`, optionally `RUN_TIME`, `TZ`) in `.env`.
 3. `./scripts/deploy.sh` (pulls, runs `docker compose up -d --build`, waits for
-   healthy, then sends the "Sir Humblebrag reporting for duty" smoke-test
-   message to Telegram; see `docs/runbook.md`). The container runs as a non-root user,
-   exposes no ports, restarts unless stopped, and keeps state in the
-   `humblebrag-data` volume mounted at `/data`.
+   healthy, then runs the smoke test: the "Sir Humblebrag reporting for duty"
+   message plus one real Claude call per flow, reported to Telegram; see
+   `docs/runbook.md`). Run the smoke test again after any `CLAUDE_MODEL`
+   change. The container runs as a non-root user, exposes no ports, restarts
+   unless stopped, and keeps state in the `humblebrag-data` volume mounted at
+   `/data`.
 
 ## Telegram bot
 The bot uses long polling (no inbound port) and answers only the chat in

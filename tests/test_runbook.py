@@ -66,3 +66,10 @@ def test_the_runbook_and_the_script_agree_on_the_smoke_command() -> None:
     """The command in the runbook is the one deploy.sh runs."""
     script = (RUNBOOK.parent.parent / "scripts" / "deploy.sh").read_text()
     assert "python -m humblebrag.smoke" in script
+
+
+def test_the_runbook_says_to_run_the_smoke_test_after_a_model_change() -> None:
+    """SA-59 AC5: a CLAUDE_MODEL change is followed by the smoke check."""
+    section = _sections()["Smoke test"]
+    assert "after any `CLAUDE_MODEL` change" in section
+    assert "one real, minimal Claude call per flow" in section

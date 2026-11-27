@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Deploy Sir Humblebrag III on this machine: pull main, rebuild, wait for the
 # container to be healthy, then run the smoke test (a Telegram message saying
-# "Sir Humblebrag reporting for duty"). Exits non-zero at the first problem.
+# "Sir Humblebrag reporting for duty", then one real Claude call per flow with a
+# pass/fail report to Telegram). Exits non-zero at the first problem.
 #
 #   ./scripts/deploy.sh
 #
@@ -40,8 +41,8 @@ while :; do
 done
 [ "$status" = healthy ] || fail "${SERVICE} is '${status}' after ${HEALTH_TIMEOUT}s; see: docker compose logs ${SERVICE}"
 
-step "Smoke test: sending the reporting-for-duty message to Telegram"
+step "Smoke test: Telegram message, then one real Claude call per flow"
 docker compose exec -T "$SERVICE" python -m humblebrag.smoke \
     || fail "smoke test failed; see: docker compose logs ${SERVICE}"
 
-step "Deployed. Check Telegram for: Sir Humblebrag reporting for duty"
+step "Deployed. Check Telegram for: Sir Humblebrag reporting for duty, and one pass per Claude flow"

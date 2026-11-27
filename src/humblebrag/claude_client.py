@@ -17,7 +17,6 @@ USER_ROLE = "user"
 RETRY_TOKEN_FACTOR = 2
 ERROR_TEXT_PREVIEW_CHARS = 200
 UNKNOWN_ERROR_PART = "unknown"
-THINKING_DISABLED: anthropic.types.ThinkingConfigDisabledParam = {"type": "disabled"}
 
 
 class Flow(StrEnum):
@@ -139,7 +138,6 @@ class ClaudeClient:
             response = await self._client.messages.create(
                 model=self._model,
                 max_tokens=max_tokens,
-                thinking=THINKING_DISABLED,
                 system=system,
                 messages=[{"role": USER_ROLE, "content": prompt}],
             )
