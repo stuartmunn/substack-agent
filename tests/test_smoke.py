@@ -169,3 +169,27 @@ def test_a_timed_out_flow_is_reported_with_a_readable_reason() -> None:
     FakeClaude.failing = {Flow.SEED: TimeoutError()}
     assert run_smoke_test(load_config(ENV)) == EXIT_FAILED
     assert "no answer within" in FakeBot.sent[-1]["text"]
+
+
+def test_a_very_long_error_does_not_hide_the_later_flows() -> None:
+    """The report is length-capped; one huge error must not cut off other flows."""
+    FakeClaude.failing = {Flow.POST: RuntimeError("x" * 10_000)}
+    assert run_smoke_test(load_config(ENV)) == EXIT_FAILED
+    report = FakeBot.sent[-1]["text"]
+    assert "❌ post: FAIL" in report
+    assert "✅ seed: pass" in report
+
+
+def test_a_hung_claude_call_times_out_and_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ERR-02: a hung Claude call cannot hang the deploy; the flow reports a timeout."""
+
+    async def hang(*_args: object) -> str:
+        await asyncio.sleep(3600)
+        return "never"
+
+    monkeypatch.setattr(FakeClaude, "complete", hang)
+    monkeypatch.setattr(smoke, "CLAUDE_CHECK_TIMEOUT_SECONDS", 0.05)
+    assert run_smoke_test(load_config(ENV)) == EXIT_FAILED
+    assert "no answer within" in FakeBot.sent[-1]["text"]

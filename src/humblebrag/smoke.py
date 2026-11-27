@@ -33,6 +33,7 @@ CLAUDE_CHECK_TIMEOUT_SECONDS = 60.0
 CLAUDE_SYSTEM = "You are a connectivity check. Answer as briefly as possible."
 CLAUDE_PROMPT = "Reply with the single word: OK"
 MAX_REPORT_LENGTH = MAX_ALERT_LENGTH
+MAX_FAILURE_DETAIL_LENGTH = 500
 REPORT_TITLE = "Claude smoke check"
 PASS_MARK = "✅"
 FAIL_MARK = "❌"
@@ -55,10 +56,14 @@ async def _send(config: Config, text: str) -> None:
 
 
 def _failure_detail(error: Exception) -> str:
-    """Describe a failed flow; a bare timeout has no message, so say what it was."""
+    """Describe a failed flow; a bare timeout has no message, so say what it was.
+
+    The text is capped so one long error cannot push later flows out of the
+    length-capped report.
+    """
     if isinstance(error, TimeoutError) and not str(error):
         return f"TimeoutError: no answer within {CLAUDE_CHECK_TIMEOUT_SECONDS:.0f}s"
-    return describe_error(error)
+    return describe_error(error)[:MAX_FAILURE_DETAIL_LENGTH]
 
 
 async def check_claude_flows(config: Config) -> dict[Flow, str | None]:
