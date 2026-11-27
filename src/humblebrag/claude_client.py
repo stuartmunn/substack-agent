@@ -7,6 +7,7 @@ from enum import StrEnum
 import anthropic
 
 from humblebrag.config import Config
+from humblebrag.logging_setup import redactor
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +32,18 @@ class Flow(StrEnum):
 def _error_detail(error: anthropic.APIStatusError) -> tuple[str, str]:
     """The API's error type and message, from the response body, length-capped.
 
-    Only the API's own ``error`` object is read, never our request. The API may
-    quote a fragment of the request in its message, so the cap and the redactor
-    bound what can leak. Missing parts read as "unknown".
+    Only the API's own ``error`` object is read, never our request. Known
+    secrets are redacted before the cap, so a cut cannot split one past the
+    redactor. The redactor does not know prompt text: if the API quotes a
+    fragment of the request, up to the cap of it can show. Missing parts read
+    as "unknown".
     """
     body = error.body if isinstance(error.body, dict) else {}
     detail = body.get("error")
     detail = detail if isinstance(detail, dict) else {}
     error_type = str(detail.get("type") or UNKNOWN_ERROR_PART)
     message = " ".join(str(detail.get("message") or UNKNOWN_ERROR_PART).split())
+    message = redactor.redact(message)
     return error_type[:ERROR_TEXT_PREVIEW_CHARS], message[:ERROR_TEXT_PREVIEW_CHARS]
 
 

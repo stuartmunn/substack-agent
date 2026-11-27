@@ -27,6 +27,7 @@ from humblebrag.claude_client import (
     Flow,
 )
 from humblebrag.config import Config, load_config
+from humblebrag.logging_setup import redactor
 
 API_KEY = "sk-ant-SECRET-key"
 MODEL = "claude-test-model-from-env"
@@ -267,6 +268,23 @@ async def test_api_error_message_is_capped_at_200_characters(
         await _client(config, recorder).complete("s", "p", Flow.REPLY)
     assert "x" * ERROR_TEXT_PREVIEW_CHARS in str(error.value)
     assert "x" * (ERROR_TEXT_PREVIEW_CHARS + 1) not in str(error.value)
+
+
+async def test_api_error_message_is_redacted_before_it_is_capped(
+    config: Config, sleeps: list[float]
+) -> None:
+    """SEC-14: a secret straddling the cap is masked whole, not cut in half."""
+    secret = "sk-ant-STRADDLES-THE-CAP"
+    padding = "y" * (ERROR_TEXT_PREVIEW_CHARS - 8)
+    recorder = Recorder([_ok(_error(400, "invalid_request_error", padding + secret))])
+    redactor.add([secret])
+    try:
+        with pytest.raises(ClaudeAPIError) as error:
+            await _client(config, recorder).complete("s", "p", Flow.REPLY)
+    finally:
+        redactor.clear()
+    assert secret not in str(error.value)
+    assert "sk-ant" not in str(error.value)
 
 
 async def test_api_error_without_a_body_reads_as_unknown(
