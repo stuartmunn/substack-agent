@@ -83,17 +83,31 @@ next deploy.
 
 ## Smoke test
 
-`docker compose exec -T humblebrag python -m humblebrag.smoke` sends one
-Telegram message, `Sir Humblebrag reporting for duty`, to the configured chat,
-using the same token and chat id as the running agent. Exit code 0 means it was
-sent. It does nothing else: no run, no draft, nothing reaches Substack.
-`./scripts/deploy.sh` runs it after every deploy; you can also run it by hand at
-any time to check the bot is reachable.
+`docker compose exec -T humblebrag python -m humblebrag.smoke` does two things,
+using the same token, chat id and API key as the running agent:
+
+1. Sends the Telegram message `Sir Humblebrag reporting for duty`.
+2. Makes one real, minimal Claude call per flow (post, reply, guard, seed) and
+   sends one Telegram message with a pass or fail line per flow. A failing flow
+   shows the API's error type and message (for example
+   `invalid_request_error`). Mocked tests cannot see the API refusing a
+   request (SA-58), so this is the check that can.
+
+Exit code 0 means both passed. It does nothing else: no run, no draft, nothing
+reaches Substack. The Claude calls cost a few tokens each. `./scripts/deploy.sh`
+runs it after every deploy (not on container start, to keep token cost down).
+
+**Run it after any `CLAUDE_MODEL` change.** The parameters a model accepts differ
+by model, so a new model can refuse a request that the old one took. Change the
+value in `.env`, `docker compose up -d --force-recreate`, then run the smoke
+test and check all four flows pass before the next 08:30 run.
 
 If it fails, the cause is in `docker compose logs humblebrag` (the log line
-`Smoke test failed`). Common causes: a wrong `TELEGRAM_CHAT_ID`, a revoked
-bot token in `secrets/telegram_bot_token`, or no outbound network from `andor`.
-It cannot alert you on Telegram, because Telegram is what failed.
+`Smoke test failed`, or `Claude smoke check failed: flow=...`). Common causes: a
+wrong `TELEGRAM_CHAT_ID`, a revoked bot token in `secrets/telegram_bot_token`, no
+outbound network from `andor`, or a Claude flow failing (see the Telegram
+report). A Telegram failure cannot alert you on Telegram, because Telegram is
+what failed.
 
 ## Refresh the Substack cookie
 

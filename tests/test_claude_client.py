@@ -138,13 +138,14 @@ async def test_model_comes_from_config_and_request_is_well_formed(
     config: Config, sleeps: list[float]
 ) -> None:
     """AC1: the model in the request is CLAUDE_MODEL; no sampling parameters that
-    current models reject are sent, and thinking is explicitly disabled (SA-56 AC6)."""
+    current models reject are sent, and no `thinking` key is sent: the accepted "off"
+    value differs by model, so the parameter is left out (SA-59 AC2)."""
     recorder = Recorder([_ok(_message())])
     await _client(config, recorder).complete("be funny", "write a post", Flow.REPLY)
     body = json.loads(recorder.requests[0].content)
     assert body["model"] == MODEL
     assert body["max_tokens"] == config.reply_max_tokens
-    assert body["thinking"] == {"type": "disabled"}
+    assert "thinking" not in body
     assert body["system"] == "be funny"
     assert body["messages"] == [{"role": "user", "content": "write a post"}]
     for rejected in ("temperature", "top_p", "top_k", "budget_tokens"):
@@ -521,7 +522,8 @@ async def test_empty_reply_is_a_typed_error(
 async def test_only_text_blocks_are_returned(
     config: Config, sleeps: list[float]
 ) -> None:
-    """Non-text blocks (e.g. thinking) are ignored; text is joined and trimmed."""
+    """A thinking block plus text blocks returns only the text, joined and trimmed
+    (SA-59 AC3)."""
     mixed = _message(
         content=[
             {"type": "thinking", "thinking": "hmm", "signature": "sig"},
