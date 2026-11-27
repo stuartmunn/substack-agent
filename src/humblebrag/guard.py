@@ -7,14 +7,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from humblebrag.alerts import alert
-from humblebrag.claude_client import ClaudeClient
+from humblebrag.claude_client import ClaudeClient, Flow
 from humblebrag.generator import GeneratedPost, PostGenerator
 from humblebrag.json_reply import JsonReplyError, parse_json_object
 
 logger = logging.getLogger(__name__)
 
 MAX_GUARD_REGENERATIONS = 2
-CLASSIFIER_MAX_TOKENS = 512
 VERDICT_PASS = "pass"
 VERDICT_FAIL = "fail"
 CHECK_WORDLIST = "wordlist"
@@ -182,9 +181,7 @@ class SafetyGuard:
             f"<draft>\nTitle: {title}\nSubtitle: {subtitle}\n"
             f"Note teaser: {teaser}\nImage scene: {scene}\n\n{body}\n</draft>"
         )
-        reply = await self._client.complete(
-            CLASSIFIER_SYSTEM, draft, CLASSIFIER_MAX_TOKENS
-        )
+        reply = await self._client.complete(CLASSIFIER_SYSTEM, draft, Flow.GUARD)
         return _parse_verdict(reply)
 
     async def check_reply(self, text: str) -> GuardResult:
@@ -198,9 +195,7 @@ class SafetyGuard:
             return wordlist
         neutralised = _DRAFT_TAG.sub(NEUTRALISED_TAG, text)
         draft = f"<draft>\n{REPLY_TEXT_LABEL} {neutralised}\n</draft>"
-        reply = await self._client.complete(
-            REPLY_CLASSIFIER_SYSTEM, draft, CLASSIFIER_MAX_TOKENS
-        )
+        reply = await self._client.complete(REPLY_CLASSIFIER_SYSTEM, draft, Flow.GUARD)
         return _parse_verdict(reply)
 
 

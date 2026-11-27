@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from humblebrag.alerts import configure_alerts
-from humblebrag.claude_client import ClaudeAPIError
+from humblebrag.claude_client import ClaudeAPIError, Flow
 from humblebrag.fetcher import TargetType
 from humblebrag.guard import (
     MAX_GUARD_REGENERATIONS,
@@ -70,9 +70,9 @@ class StubClient:
         self._replies = list(replies)
         self.calls: list[dict[str, Any]] = []
 
-    async def complete(self, system: str, prompt: str, max_tokens: int) -> str:
+    async def complete(self, system: str, prompt: str, flow: Flow) -> str:
         """Record the call; return or raise the next canned reply."""
-        self.calls.append({"system": system, "prompt": prompt, "max": max_tokens})
+        self.calls.append({"system": system, "prompt": prompt, "flow": flow})
         reply = self._replies.pop(0)
         if isinstance(reply, Exception):
             raise reply

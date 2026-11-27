@@ -19,6 +19,13 @@ DEFAULT_MIN_POST_WORDS = 250
 DEFAULT_MAX_POST_WORDS = 600
 DEFAULT_MAX_PENDING_DRAFTS = 7
 DEFAULT_FETCH_TIMEOUT_SECONDS = 10
+MIN_POST_TOKENS = 4096
+TOKENS_PER_WORD_ALLOWANCE = 3
+JSON_OVERHEAD_TOKENS = 512
+DEFAULT_REPLY_MAX_TOKENS = 1024
+DEFAULT_GUARD_MAX_TOKENS = 512
+DEFAULT_SEED_MAX_TOKENS = 128
+DEFAULT_MAX_TOKENS_CEILING = 8192
 EXIT_CONFIG_ERROR = 1
 PUBLICATION_URL_SETTING = "SUBSTACK_PUBLICATION_URL"
 PUBLICATION_URL_FORMAT = (
@@ -51,6 +58,11 @@ class Config:
     max_post_words: int = DEFAULT_MAX_POST_WORDS
     max_pending_drafts: int = DEFAULT_MAX_PENDING_DRAFTS
     fetch_timeout_seconds: int = DEFAULT_FETCH_TIMEOUT_SECONDS
+    post_max_tokens: int = MIN_POST_TOKENS
+    reply_max_tokens: int = DEFAULT_REPLY_MAX_TOKENS
+    guard_max_tokens: int = DEFAULT_GUARD_MAX_TOKENS
+    seed_max_tokens: int = DEFAULT_SEED_MAX_TOKENS
+    max_tokens_ceiling: int = DEFAULT_MAX_TOKENS_CEILING
 
 
 def _read_value(env: Mapping[str, str], name: str) -> str | None:
@@ -149,6 +161,9 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     max_words = _parse_positive_int(source, "POST_MAX_WORDS", DEFAULT_MAX_POST_WORDS)
     if min_words > max_words:
         raise ConfigError("POST_MIN_WORDS must not exceed POST_MAX_WORDS")
+    default_post_tokens = max(
+        MIN_POST_TOKENS, max_words * TOKENS_PER_WORD_ALLOWANCE + JSON_OVERHEAD_TOKENS
+    )
     return Config(
         telegram_bot_token=token,
         telegram_chat_id=_parse_chat_id(chat_id),
@@ -165,6 +180,21 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         ),
         fetch_timeout_seconds=_parse_positive_int(
             source, "FETCH_TIMEOUT_SECONDS", DEFAULT_FETCH_TIMEOUT_SECONDS
+        ),
+        post_max_tokens=_parse_positive_int(
+            source, "POST_MAX_TOKENS", default_post_tokens
+        ),
+        reply_max_tokens=_parse_positive_int(
+            source, "REPLY_MAX_TOKENS", DEFAULT_REPLY_MAX_TOKENS
+        ),
+        guard_max_tokens=_parse_positive_int(
+            source, "GUARD_MAX_TOKENS", DEFAULT_GUARD_MAX_TOKENS
+        ),
+        seed_max_tokens=_parse_positive_int(
+            source, "SEED_MAX_TOKENS", DEFAULT_SEED_MAX_TOKENS
+        ),
+        max_tokens_ceiling=_parse_positive_int(
+            source, "CLAUDE_MAX_TOKENS_CEILING", DEFAULT_MAX_TOKENS_CEILING
         ),
     )
 

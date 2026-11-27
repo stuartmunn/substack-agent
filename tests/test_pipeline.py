@@ -18,7 +18,7 @@ import pytest
 
 from humblebrag.alerts import configure_alerts, telegram_sender
 from humblebrag.approval import HANDED_OVER_TEXT, ApproveService
-from humblebrag.claude_client import ClaudeAPIError
+from humblebrag.claude_client import ClaudeAPIError, Flow
 from humblebrag.config import Config, load_config
 from humblebrag.drafts import (
     STATUS_BINNED,
@@ -95,7 +95,7 @@ class FakeClaude:
         self.fail_kind: str | None = None
         self.calls: list[str] = []
 
-    async def complete(self, system: str, prompt: str, max_tokens: int = 0) -> str:
+    async def complete(self, system: str, prompt: str, flow: Flow) -> str:
         """Answer a seed, classifier or generation request."""
         if system == SEED_SYSTEM:
             kind, reply = "seed", "A lukewarm cup of tea"

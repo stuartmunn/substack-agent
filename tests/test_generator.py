@@ -7,14 +7,11 @@ from typing import Any
 import pytest
 
 from humblebrag import generator as generator_module
-from humblebrag.claude_client import ClaudeAPIError
-from humblebrag.config import Config, load_config
+from humblebrag.claude_client import ClaudeAPIError, Flow
+from humblebrag.config import TOKENS_PER_WORD_ALLOWANCE, Config, load_config
 from humblebrag.generator import (
-    JSON_OVERHEAD_TOKENS,
     MAX_ATTEMPTS,
     MAX_TEASER_CHARS,
-    MIN_GENERATION_TOKENS,
-    TOKENS_PER_WORD_ALLOWANCE,
     GeneratedPost,
     PostGenerationError,
     PostGenerator,
@@ -44,11 +41,9 @@ class StubClient:
         self._replies = list(replies)
         self.calls: list[dict[str, Any]] = []
 
-    async def complete(self, system: str, prompt: str, max_tokens: int) -> str:
+    async def complete(self, system: str, prompt: str, flow: Flow) -> str:
         """Record the call and return or raise the next canned reply."""
-        self.calls.append(
-            {"system": system, "prompt": prompt, "max_tokens": max_tokens}
-        )
+        self.calls.append({"system": system, "prompt": prompt, "flow": flow})
         reply = self._replies.pop(0)
         if isinstance(reply, Exception):
             raise reply
@@ -231,18 +226,11 @@ async def test_body_with_a_link_is_rejected(link: str) -> None:
     assert post.body_markdown == _body(300)
 
 
-async def test_token_budget_has_a_floor_and_grows_with_the_word_range() -> None:
-    """Large word ranges get a larger token budget so JSON is not cut off."""
-    small = StubClient([_reply()])
-    await _generator(small).generate(SEED)
-    assert small.calls[0]["max_tokens"] == MIN_GENERATION_TOKENS
-
-    config = load_config({**ENV, "POST_MIN_WORDS": "10", "POST_MAX_WORDS": "5000"})
-    large = StubClient([_reply(20)])
-    await _generator(large, config).generate(SEED)
-    assert large.calls[0]["max_tokens"] == (
-        5000 * TOKENS_PER_WORD_ALLOWANCE + JSON_OVERHEAD_TOKENS
-    )
+async def test_post_calls_use_the_post_flow() -> None:
+    """The generator asks for the post flow, whose budget the client applies."""
+    client = StubClient([_reply()])
+    await _generator(client).generate(SEED)
+    assert client.calls[0]["flow"] is Flow.POST
 
 
 @pytest.mark.parametrize("footnote", ["[1][2]", "\n\n[1]: see page 5"])
@@ -362,11 +350,9 @@ async def test_the_prompt_describes_the_teaser_rules() -> None:
 async def test_the_output_budget_has_headroom_for_the_teaser() -> None:
     """SA-47 risk: the token budget still covers the maximum body plus a teaser."""
     config = load_config(ENV)
-    client = StubClient([_reply()])
-    await _generator(client, config).generate(SEED)
     teaser_tokens = MAX_TEASER_CHARS  # a token is at least one character
     body_tokens = config.max_post_words * TOKENS_PER_WORD_ALLOWANCE
-    assert client.calls[0]["max_tokens"] >= body_tokens + teaser_tokens
+    assert config.post_max_tokens >= body_tokens + teaser_tokens
 
 
 # SA-49: the image scene
