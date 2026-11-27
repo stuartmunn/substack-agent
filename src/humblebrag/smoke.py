@@ -54,6 +54,13 @@ async def _send(config: Config, text: str) -> None:
             await bot.send_message(chat_id=config.telegram_chat_id, text=text)
 
 
+def _failure_detail(error: Exception) -> str:
+    """Describe a failed flow; a bare timeout has no message, so say what it was."""
+    if isinstance(error, TimeoutError) and not str(error):
+        return f"TimeoutError: no answer within {CLAUDE_CHECK_TIMEOUT_SECONDS:.0f}s"
+    return describe_error(error)
+
+
 async def check_claude_flows(config: Config) -> dict[Flow, str | None]:
     """Make one minimal real Claude call per flow.
 
@@ -68,7 +75,7 @@ async def check_claude_flows(config: Config) -> dict[Flow, str | None]:
                 await client.complete(CLAUDE_SYSTEM, CLAUDE_PROMPT, flow)
         except Exception as error:  # every failure is reported per flow
             logger.exception("Claude smoke check failed: flow=%s", flow)
-            results[flow] = describe_error(error)
+            results[flow] = _failure_detail(error)
         else:
             results[flow] = None
     return results

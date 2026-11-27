@@ -160,3 +160,10 @@ def test_main_exits_with_the_smoke_result(monkeypatch: pytest.MonkeyPatch) -> No
     with pytest.raises(SystemExit) as failed:
         smoke.main()
     assert failed.value.code == EXIT_FAILED
+
+
+def test_a_timed_out_flow_is_reported_with_a_readable_reason() -> None:
+    """A bare TimeoutError has no message; the report must still say what happened."""
+    FakeClaude.failing = {Flow.SEED: TimeoutError()}
+    assert run_smoke_test(load_config(ENV)) == EXIT_FAILED
+    assert "no answer within" in FakeBot.sent[-1]["text"]
