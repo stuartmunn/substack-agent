@@ -15,7 +15,11 @@
 ## Follow-ups
 <!-- Anything out of scope noticed along the way. Write "None" if there is nothing. -->
 
+## Pre-PR review
+<!-- Each `/code-review medium --fix` finding and its outcome: fixed, no change needed (reason), or skipped (reason). Flag anything still open after 3 rounds. Write "None" if the review was clean. -->
+
 ## Checklist
 - [ ] Self-reviewed against CODING_STANDARDS.md
+- [ ] Pre-PR review (`/code-review medium --fix`) done and recorded above
 - [ ] `ruff check .` and `ruff format --check .` clean
 - [ ] `pytest` green

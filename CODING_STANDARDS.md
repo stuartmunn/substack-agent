@@ -114,3 +114,5 @@ New rules from PR-Agent go in "Learned from PR-Agent" in the form
 - [GEN-10] Handler patterns that must not overlap are defined together from one set of constants, never derived by slicing another pattern, and a test proves they partition the inputs (from PR #42, 2026-11-21)
 - [ERR-25] Failure paths shared by several features take the feature name, so logs and alerts say which one failed (from PR #42, 2026-11-21)
 - [MEM-02] Bounded in-memory caches never evict an entry that has work in flight or the entry just added, and work that finds its entry gone says so instead of returning silently (from PR #42, 2026-11-21)
+- [DOC-01] Numbered workflow instructions put each verification step before the action it gates, including the exceptional path (such as raising a PR at a round limit) (from PR #44, 2026-11-27)
+- [TST-09] Test helpers that locate content in a file (a heading, a section) assert with a message naming what is missing, instead of letting a bare `ValueError` surface (from PR #44, 2026-11-27)

@@ -42,8 +42,37 @@ Jira project: SA (stuartmunn.atlassian.net). One Jira story = one branch = one P
    - `ruff check .` and `ruff format --check .` clean
    - `pytest` green
    - Self-review the diff against every item in `CODING_STANDARDS.md`; fix breaches.
+   - Complete the "Pre-PR review" below.
 4. Open the PR with `gh pr create` using `.github/pull_request_template.md`.
    Title: `SA-<n>: <story title>`.
+
+## Pre-PR review
+Before running `gh pr create`:
+1. Commit all story work (`SA-<n>: ...`) before each round. `--fix` edits have
+   no rewind checkpoints; git on the story branch is the safety net.
+2. Run `/code-review medium --fix Follow CODING_STANDARDS.md as well as CLAUDE.md.`
+   on the story branch. Always pass `medium` explicitly, otherwise the review
+   reuses the last level typed. The review reads CLAUDE.md but not other files
+   unless pointed at them, hence the trailing instruction.
+3. Wait for the findings before going on. The review runs as a background
+   subagent, so do not run `gh pr create` until it has reported.
+4. For each finding, do one of: fix it, mark it "no change needed" with a
+   reason, or skip it with a reason.
+5. After fixing, commit the fixes and rerun the review. Stop once a run has
+   nothing left to fix, or after 3 rounds. A run that fails or returns no
+   result is not clean: rerun it (it counts as a round), and flag it in the PR
+   if it stays that way.
+6. Commit any `--fix` edits, then rerun `ruff check .`, `ruff format --check .`
+   and `pytest`, and self-review the `--fix` diff against `CODING_STANDARDS.md`:
+   the fixes land after the earlier checks and are unverified.
+7. If the 3-round limit is hit with a finding still open, raise the PR anyway
+   and flag that finding in the PR description.
+8. Add a "Pre-PR review" section to the PR description listing each finding
+   and its outcome.
+
+Note: only a GitHub PR comment of exactly `/review` triggers PR-Agent. In
+Claude Code, `/review` is an alias for `/code-review`, so it is not the same
+thing.
 
 ## Jira status
 Claude Code keeps the story's status current (use the Atlassian tools):
