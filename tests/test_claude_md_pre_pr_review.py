@@ -11,7 +11,8 @@ HEADING = "Pre-PR review"
 def _section(heading: str) -> str:
     """Return a CLAUDE.md section with line wrapping collapsed."""
     text = CLAUDE_MD.read_text(encoding="utf-8")
-    start = text.index(f"## {heading}")
+    start = text.find(f"## {heading}")
+    assert start != -1, f"Heading '## {heading}' not found in CLAUDE.md"
     end = text.find("\n## ", start + 1)
     section = text[start:] if end == -1 else text[start:end]
     return " ".join(section.split())  # prose is hard-wrapped; ignore line breaks
@@ -44,6 +45,14 @@ def test_checks_rerun_after_fix_edits() -> None:
     assert "`ruff check .`" in section
     assert "`pytest`" in section
     assert "self-review the `--fix` diff against `CODING_STANDARDS.md`" in section
+
+
+def test_fix_edits_verified_before_pr_is_raised() -> None:
+    """The recheck step comes before the raise-anyway step at the round limit."""
+    section = _section(HEADING)
+    assert section.index("Commit any `--fix` edits") < section.index(
+        "raise the PR anyway"
+    )
 
 
 def test_pr_template_checklist_has_pre_pr_review_box() -> None:
